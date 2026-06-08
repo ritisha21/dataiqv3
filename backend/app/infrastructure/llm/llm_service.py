@@ -1,5 +1,5 @@
 from typing import Dict, Any, Optional, List
-from langchain_openai import ChatOpenAI
+from langchain_ollama import ChatOllama
 from langchain.schema import HumanMessage, SystemMessage
 from app.core.config import settings
 import json
@@ -9,14 +9,12 @@ import structlog
 logger = structlog.get_logger()
 
 
-def _get_llm(temperature: float = 0.0) -> ChatOpenAI:
-    return ChatOpenAI(
+def _get_llm(temperature: float = 0.0):
+    return ChatOllama(
         model=settings.LLM_MODEL,
+        base_url=settings.OLLAMA_BASE_URL,
         temperature=temperature,
-        openai_api_key=settings.OPENAI_API_KEY,
-        max_tokens=1000,
     )
-
 
 SQL_SYSTEM_PROMPT = """You are a SQL expert. Generate a single SELECT SQL query based on the schema and user question.
 

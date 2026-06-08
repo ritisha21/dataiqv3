@@ -23,9 +23,11 @@ class Settings(BaseSettings):
     FERNET_KEY: Optional[str] = None
 
     # LLM
-    OPENAI_API_KEY: Optional[str] = None
-    LLM_MODEL: str = "gpt-4o-mini"
-
+    OLLAMA_BASE_URL: str = "http://localhost:11434"
+    LLM_MODEL: str = "qwen3:8b"
+    LLM_PROVIDER: str = "ollama"
+    OLLAMA_BASE_URL: str = "http://localhost:11434"
+    
     # ML
     ML_MODEL_DIR: str = "/tmp/dataiq/models"
 
