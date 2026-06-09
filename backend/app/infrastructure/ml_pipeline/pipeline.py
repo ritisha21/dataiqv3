@@ -38,6 +38,7 @@ class MLPipelineService:
         tenant_id: str,
         hyperparameters: Optional[Dict] = None,
         dataset_hash: Optional[str] = None,
+        freq_maps: Optional[Dict] = None,
     ) -> Dict[str, Any]:
         """
         Returns {metrics, artifact_path, feature_importance, params}
@@ -76,10 +77,14 @@ class MLPipelineService:
         else:
             y = y.astype(float)
 
-        # Ensure all features are numeric
+        # Frequency-encode string columns and save maps for predict
+        freq_maps = {}
         for col in X.columns:
             if X[col].dtype == object:
-                X = X.drop(columns=[col])
+                freq_map = X[col].value_counts(normalize=True).to_dict()
+                freq_maps[col] = freq_map
+                X[col] = X[col].map(freq_map).fillna(0.0)
+
 
         X = X.fillna(0).astype(float)
 
@@ -103,11 +108,13 @@ class MLPipelineService:
         if is_classification:
             n_classes = len(np.unique(y_train))
             objective = "binary:logistic" if n_classes == 2 else "multi:softprob"
+            extra_params = {"num_class": int(n_classes)} if n_classes > 2 else {}
             model = xgb.XGBClassifier(
                 **params,
+                **extra_params,
                 objective=objective,
                 use_label_encoder=False,
-                eval_metric="logloss",
+                eval_metric="logloss" if n_classes == 2 else "merror",
             )
             model.fit(
                 X_train, y_train,
@@ -170,6 +177,7 @@ class MLPipelineService:
             "feature_cols": X.columns.tolist(),
             "is_classification": is_classification,
             "goal": goal.value,
+            "freq_maps": freq_maps or {},
         }
         joblib.dump(artifact, artifact_path)
 
@@ -214,6 +222,14 @@ class MLPipelineService:
             if col not in df.columns:
                 df[col] = 0.0
 
+        # Handle string columns — frequency encode using training data freq maps
+        freq_maps = artifact.get("freq_maps", {})
+        for col in df.columns:
+            if df[col].dtype == object:
+                if col in freq_maps:
+                    df[col] = df[col].map(freq_maps[col]).fillna(0.0)
+                else:
+                    df[col] = 0.0
         df = df[feature_cols].fillna(0).astype(float)
 
         prediction = model.predict(df)[0]

@@ -45,6 +45,13 @@ def train_model_task(self, model_id: str, tenant_id: str, connection_config: dic
 
         dataset_hash = feature_store.compute_dataset_hash(df)
 
+        # Build freq_maps from raw df before feature_store transforms string cols
+        freq_maps = {}
+        for col in df.select_dtypes(include=["object"]).columns:
+            if col != training_config["target_col"]:
+                freq_maps[col] = df[col].value_counts(normalize=True).to_dict()
+
+
         # Feature engineering
         feature_df, definitions = feature_store.build_features(
             df,
@@ -65,6 +72,7 @@ def train_model_task(self, model_id: str, tenant_id: str, connection_config: dic
             tenant_id=tenant_id,
             hyperparameters=training_config.get("hyperparameters", {}),
             dataset_hash=dataset_hash,
+            freq_maps=freq_maps,
         )
 
         # Update model status in DB via sync connection

@@ -39,6 +39,10 @@ class FeatureStoreService:
         Returns (feature_df, feature_definitions_list).
         Uses Dask internally for large DataFrames.
         """
+        # Convert datetime columns to numeric (unix timestamp) before any processing
+        for col in df.select_dtypes(include=["datetime64[ns]", "datetimetz"]).columns:
+            df[col] = df[col].astype("int64") // 10**9  # seconds since epoch
+
         use_dask = len(df) > DASK_THRESHOLD
         logger.info(
             "feature_store_build",

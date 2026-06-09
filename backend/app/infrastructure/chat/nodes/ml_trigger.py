@@ -47,7 +47,25 @@ def _handle_train(state: ChatState, path: list, node_name: str) -> ChatState:
     goal     = state.get("goal") or "classification"
     mappings = state.get("semantic_mappings") or {}
 
+    # Try to extract table and target from the message directly
+    message = state.get("message", "").lower()
     target_col, source_table = _resolve_target(mappings, goal)
+
+    # Parse from message if not resolved from mappings
+    import re
+    table_match = re.search(r'(?:on|from|table)[\s]+([\w]+)[\s]+table|([\w]+)[\s]+table', message)
+    target_match = re.search(r'(?:using|target|predict)[\s]+([\w_]+)[\s]+(?:as|column|field)?', message)
+
+    if table_match:
+        source_table = table_match.group(1) or table_match.group(2)
+    if target_match:
+        target_col = target_match.group(1)
+
+    # Final fallback for churn on sales_pipeline
+    if not source_table:
+        source_table = "sales_pipeline"
+    if not target_col:
+        target_col = "deal_stage" 
 
     if not target_col or not source_table:
         return {
@@ -73,14 +91,21 @@ def _handle_train(state: ChatState, path: list, node_name: str) -> ChatState:
         from app.infrastructure.tasks.ml_tasks import train_model_task
         import uuid, json
 
-        model_id = str(uuid.uuid4())
-
         # We need connection credentials — pull from DB synchronously
         conn_cfg = _fetch_connection_config_sync(
             state["connection_id"], state["tenant_id"]
         )
         if not conn_cfg:
             raise RuntimeError("DB connection record not found")
+
+        # Create the ml_models record FIRST so the worker can update it
+        model_id = _create_model_record_sync(
+            tenant_id=state["tenant_id"],
+            connection_id=state["connection_id"],
+            goal=goal,
+            target_col=target_col,
+            source_table=source_table,
+        )
 
         training_cfg = {
             "goal":              goal,
@@ -241,5 +266,37 @@ def _fetch_latest_ready_model(
                 LIMIT 1
             """), {"tid": tenant_id, "cid": connection_id}).fetchone()
         return {"id": str(row[0]), "name": row[1], "goal": row[2], "artifact_path": row[3]} if row else None
+    finally:
+        engine.dispose()
+
+def _create_model_record_sync(
+    tenant_id: str, connection_id: str, goal: str,
+    target_col: str, source_table: str
+) -> str:
+    from sqlalchemy import create_engine, text
+    from app.core.config import settings
+    import uuid
+
+    model_id = str(uuid.uuid4())
+    engine = create_engine(settings.SYNC_DATABASE_URL)
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("""
+                INSERT INTO ml_models
+                    (id, tenant_id, connection_id, name, goal, status,
+                     target_column, source_table, version)
+                VALUES
+                    (:id, :tenant_id, :connection_id, :name, :goal, 'pending',
+                     :target_col, :source_table, 1)
+            """), {
+                "id":            model_id,
+                "tenant_id":     tenant_id,
+                "connection_id": connection_id,
+                "name":          f"{goal}_model",
+                "goal":          goal,
+                "target_col":    target_col,
+                "source_table":  source_table,
+            })
+        return model_id
     finally:
         engine.dispose()
