@@ -1,15 +1,32 @@
 'use client'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { modelsApi, connectionsApi } from '@/lib/api'
 import { useConnectionStore } from '@/lib/store'
 import toast from 'react-hot-toast'
 import {
   BrainCircuit, Plus, Loader2, ChevronDown, ChevronUp,
-  BarChart2, Zap, AlertCircle
+  BarChart2, Zap, AlertCircle, TrendingUp, CheckCircle2
 } from 'lucide-react'
 
 const GOALS = ['churn', 'revenue_forecast', 'classification', 'regression']
+
+// Known agents and products from the CRM data
+const SALES_AGENTS = [
+  'Darcel Schlecht', 'Vicki Laflamme', 'Anna Snelling', 'Kary Hendrixson',
+  'Kami Bicknell', 'Versie Hillebrand', 'Zane Levy', 'Cassey Cress',
+  'Jonathan Berthelot', 'Gladys Colclough', 'Lajuana Vencill', 'Corliss Cosme',
+  'Markita Hansen', 'Maureen Marcano', 'Marty Freudenburg', 'Donn Cantrell',
+  'James Ascencio', 'Violet Mclelland', 'Moses Frase', 'Daniell Hammack',
+  'Niesha Huffines', 'Reed Clapper', 'Boris Faz', 'Cecily Lampkin',
+  'Hayden Neloms', 'Elease Gluck', 'Rosie Papadopoulos', 'Rosalina Dieter',
+  'Garret Kinder', 'Wilburn Farren'
+]
+
+const PRODUCTS = [
+  'GTX Basic', 'MG Special', 'GTXPro', 'MG Advanced',
+  'GTX Plus Basic', 'GTX Plus Pro', 'GTK 500'
+]
 
 export default function ModelsPage() {
   const { selectedConnectionId } = useConnectionStore()
@@ -19,7 +36,7 @@ export default function ModelsPage() {
   const { data: models = [], isLoading } = useQuery({
     queryKey: ['models'],
     queryFn:  () => modelsApi.list().then(r => r.data),
-    refetchInterval: 8_000,  // poll while models may be training
+    refetchInterval: 8_000,
   })
 
   const trainMutation = useMutation({
@@ -93,7 +110,7 @@ function TrainForm({ connectionId, onSubmit, loading }: any) {
       <h3 className="font-medium text-sm">New Model</h3>
       <div className="grid grid-cols-2 gap-3">
         <Field label="Model Name" value={f.name}
-               onChange={e => setF(p => ({ ...p, name: e.target.value }))} />
+               onChange={(e: any) => setF(p => ({ ...p, name: e.target.value }))} />
         <div>
           <label className="block text-xs text-muted mb-1">Goal</label>
           <select value={f.goal} onChange={e => setF(p => ({ ...p, goal: e.target.value }))}
@@ -136,17 +153,29 @@ function TrainForm({ connectionId, onSubmit, loading }: any) {
 }
 
 function ModelCard({ model: m }: { model: any }) {
-  const [expanded, setExpanded]    = useState(false)
-  const [predInput, setPredInput]  = useState('')
-  const [predResult, setPredResult]= useState<any>(null)
+  const [expanded, setExpanded] = useState(false)
+  const [predResult, setPredResult] = useState<any>(null)
   const [predLoading, setPredLoading] = useState(false)
 
+  // Smart form fields
+  const [salesAgent, setSalesAgent] = useState('Anna Snelling')
+  const [product, setProduct] = useState('GTXPro')
+  const [closeValue, setCloseValue] = useState('5000')
+  const [createdDate, setCreatedDate] = useState('2017-01-01')
+  const [closeDate, setCloseDate] = useState('2017-03-01')
+
+  const dateToUnix = (d: string) => Math.floor(new Date(d).getTime() / 1000)
+
   const runPrediction = async () => {
-    if (!predInput.trim()) return
     setPredLoading(true)
     try {
-      let input_data: any = {}
-      try { input_data = JSON.parse(predInput) } catch { input_data = {} }
+      const input_data: any = {
+        sales_agent: salesAgent,
+        product: product,
+        close_value: parseFloat(closeValue) || 0,
+        created_date: dateToUnix(createdDate),
+        close_date: dateToUnix(closeDate),
+      }
       const { data } = await modelsApi.predict({ model_id: m.id, input_data })
       setPredResult(data.prediction)
     } catch (e: any) {
@@ -161,6 +190,18 @@ function ModelCard({ model: m }: { model: any }) {
     training: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30',
     failed:   'bg-red-500/20 text-red-400 border-red-500/30',
     pending:  'bg-blue-500/20 text-blue-400 border-blue-500/30',
+  }
+
+  const predictionColors: Record<string, string> = {
+    'Won':         'text-emerald-400',
+    'Lost':        'text-red-400',
+    'In Progress': 'text-yellow-400',
+  }
+
+  const predictionIcons: Record<string, any> = {
+    'Won':         <CheckCircle2 size={18} className="text-emerald-400" />,
+    'Lost':        <AlertCircle size={18} className="text-red-400" />,
+    'In Progress': <TrendingUp size={18} className="text-yellow-400" />,
   }
 
   return (
@@ -199,7 +240,7 @@ function ModelCard({ model: m }: { model: any }) {
                     <div key={k} className="bg-surface-3 rounded-lg px-3 py-2 text-center">
                       <p className="text-xs text-muted">{k.toUpperCase()}</p>
                       <p className="text-sm font-semibold text-accent">
-                        {v < 1 ? (v * 100).toFixed(1) + (k.includes('rmse') || k.includes('mae') ? '' : '%') : v.toLocaleString()}
+                        {v < 1 ? (v * 100).toFixed(1) + '%' : v.toLocaleString()}
                       </p>
                     </div>
                   )
@@ -208,32 +249,134 @@ function ModelCard({ model: m }: { model: any }) {
             </div>
           )}
 
-          {/* Prediction */}
+          {/* Smart Prediction Form */}
           {m.status === 'ready' && (
             <div>
-              <p className="text-xs text-muted mb-2 font-medium">PREDICT</p>
-              <div className="flex gap-2">
-                <input
-                  value={predInput}
-                  onChange={e => setPredInput(e.target.value)}
-                  placeholder='{"feature_1": 0.5, "feature_2": 42}'
-                  className="flex-1 bg-surface-2 border border-border rounded-lg px-3 py-2
-                             text-xs font-mono text-white placeholder-muted
-                             focus:outline-none focus:border-accent"
-                />
-                <button onClick={runPrediction} disabled={predLoading}
-                  className="px-3 py-2 bg-accent hover:bg-accent-hover disabled:opacity-50
-                             rounded-lg text-xs transition-all flex items-center gap-1">
-                  {predLoading ? <Loader2 size={12} className="animate-spin" /> : <Zap size={12} />}
-                  Predict
-                </button>
+              <p className="text-xs text-muted mb-3 font-medium">PREDICT DEAL OUTCOME</p>
+              <div className="grid grid-cols-2 gap-3">
+
+                {/* Sales Agent dropdown */}
+                <div>
+                  <label className="block text-xs text-muted mb-1">Sales Agent</label>
+                  <select
+                    value={salesAgent}
+                    onChange={e => setSalesAgent(e.target.value)}
+                    className="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 text-sm
+                               text-white focus:outline-none focus:border-accent"
+                  >
+                    {SALES_AGENTS.map(a => <option key={a} value={a}>{a}</option>)}
+                  </select>
+                </div>
+
+                {/* Product dropdown */}
+                <div>
+                  <label className="block text-xs text-muted mb-1">Product</label>
+                  <select
+                    value={product}
+                    onChange={e => setProduct(e.target.value)}
+                    className="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 text-sm
+                               text-white focus:outline-none focus:border-accent"
+                  >
+                    {PRODUCTS.map(p => <option key={p} value={p}>{p}</option>)}
+                  </select>
+                </div>
+
+                {/* Deal Value */}
+                <div>
+                  <label className="block text-xs text-muted mb-1">Deal Value ($)</label>
+                  <input
+                    type="number"
+                    value={closeValue}
+                    onChange={e => setCloseValue(e.target.value)}
+                    placeholder="5000"
+                    className="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 text-sm
+                               text-white focus:outline-none focus:border-accent"
+                  />
+                </div>
+
+                {/* Created Date */}
+                <div>
+                  <label className="block text-xs text-muted mb-1">Deal Created</label>
+                  <input
+                    type="date"
+                    value={createdDate}
+                    onChange={e => setCreatedDate(e.target.value)}
+                    className="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 text-sm
+                               text-white focus:outline-none focus:border-accent"
+                  />
+                </div>
+
+                {/* Close Date */}
+                <div>
+                  <label className="block text-xs text-muted mb-1">Expected Close</label>
+                  <input
+                    type="date"
+                    value={closeDate}
+                    onChange={e => setCloseDate(e.target.value)}
+                    className="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 text-sm
+                               text-white focus:outline-none focus:border-accent"
+                  />
+                </div>
+
+                {/* Predict Button */}
+                <div className="flex items-end">
+                  <button
+                    onClick={runPrediction}
+                    disabled={predLoading}
+                    className="w-full px-4 py-2 bg-accent hover:bg-accent-hover disabled:opacity-50
+                               rounded-lg text-sm transition-all flex items-center justify-center gap-2"
+                  >
+                    {predLoading
+                      ? <Loader2 size={14} className="animate-spin" />
+                      : <Zap size={14} />}
+                    Predict Outcome
+                  </button>
+                </div>
               </div>
+
+              {/* Result */}
               {predResult !== null && (
-                <div className="mt-2 bg-accent/10 border border-accent/20 rounded-lg px-3 py-2">
-                  <p className="text-xs text-muted">Result</p>
-                  <p className="text-sm font-semibold text-accent">
-                    {typeof predResult === 'object' ? JSON.stringify(predResult) : String(predResult)}
-                  </p>
+                <div className="mt-4 bg-surface-3 border border-border rounded-xl p-4">
+                  <p className="text-xs text-muted mb-2">PREDICTION RESULT</p>
+                  {typeof predResult === 'object' ? (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        {predictionIcons[predResult.prediction] || <BarChart2 size={18} className="text-accent" />}
+                        <span className={`text-2xl font-bold ${predictionColors[predResult.prediction] || 'text-accent'}`}>
+                          {predResult.prediction}
+                        </span>
+                      </div>
+                      {predResult.confidence !== undefined && (
+                        <div>
+                          <div className="flex justify-between text-xs text-muted mb-1">
+                            <span>Confidence</span>
+                            <span>{(predResult.confidence * 100).toFixed(1)}%</span>
+                          </div>
+                          <div className="w-full bg-surface-2 rounded-full h-2">
+                            <div
+                              className="bg-accent rounded-full h-2 transition-all"
+                              style={{ width: `${predResult.confidence * 100}%` }}
+                            />
+                          </div>
+                        </div>
+                      )}
+                      {predResult.probability && (
+                        <div className="grid grid-cols-3 gap-2 mt-2">
+                          {Object.entries(predResult.probability).map(([k, v]: any) => {
+                            const labels: Record<string, string> = { '0': 'Lost', '1': 'In Progress', '2': 'Won' }
+                            return (
+                              <div key={k} className="bg-surface-2 rounded-lg p-2 text-center">
+                                <p className="text-xs text-muted">{labels[k] || k}</p>
+                                <p className="text-sm font-semibold text-white">{(v * 100).toFixed(1)}%</p>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="text-lg font-bold text-accent">{String(predResult)}</p>
+                  )}
                 </div>
               )}
             </div>
@@ -253,5 +396,3 @@ function Field({ label, ...props }: any) {
     </div>
   )
 }
-
-function toast_error(msg: string) { console.error(msg) }

@@ -38,7 +38,7 @@ class MLPipelineService:
         tenant_id: str,
         hyperparameters: Optional[Dict] = None,
         dataset_hash: Optional[str] = None,
-        freq_maps: Optional[Dict] = None,
+        input_freq_maps: Optional[Dict] = None,
     ) -> Dict[str, Any]:
         """
         Returns {metrics, artifact_path, feature_importance, params}
@@ -177,7 +177,7 @@ class MLPipelineService:
             "feature_cols": X.columns.tolist(),
             "is_classification": is_classification,
             "goal": goal.value,
-            "freq_maps": freq_maps or {},
+            "freq_maps": input_freq_maps or {},
         }
         joblib.dump(artifact, artifact_path)
 
