@@ -56,6 +56,8 @@ export const authApi = {
 
 export const connectionsApi = {
   connect:      (data: any)  => api.post('/connections/connect-db', data),
+  testConnection: (data: any) => api.post('/connections/test-connection', data),
+  testConnection: (data: any) => api.post('/connections/test-connection', data),
   list:         ()           => api.get('/connections/'),
   getSchema:    (id: string) => api.get(`/connections/${id}/schema`),
   getSemantic:  (id: string) => api.get(`/connections/${id}/semantic`),
