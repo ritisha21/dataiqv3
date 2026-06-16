@@ -47,6 +47,12 @@ def train_model_task(self, model_id: str, tenant_id: str, connection_config: dic
 
         # Build freq_maps from raw df COPY before any transformation
         raw_df = df.copy()
+
+        # Drop leakage columns - known only AFTER outcome occurs
+        LEAKAGE_COLS = ['close_date', 'close_value']
+        leakage_present = [c for c in LEAKAGE_COLS if c in df.columns and c != training_config['target_col']]
+        if leakage_present:
+            df = df.drop(columns=leakage_present)
         freq_maps = {}
         for col in raw_df.select_dtypes(include=["object"]).columns:
             if col != training_config["target_col"]:
@@ -138,3 +144,5 @@ def _update_model_status(model_id: str, status: str, **kwargs):
                 })
     finally:
         engine.dispose()
+
+

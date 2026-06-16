@@ -63,29 +63,6 @@ async def test_connection_endpoint(
     return {"status": "success", "message": "Connection successful"}
 
 
-
-@router.post("/test-connection")
-async def test_connection_endpoint(
-    req: ConnectDBRequest,
-    ctx: TenantContext = Depends(require_analyst_or_admin),
-):
-    """Test database credentials without saving the connection."""
-    class TempConn:
-        pass
-    tmp = TempConn()
-    tmp.db_type = req.db_type
-    tmp.host = req.host
-    tmp.port = req.port
-    tmp.database = req.database
-    tmp.username = req.username
-    tmp.encrypted_password = encrypt_credential(req.password)
-
-    ok = connector_service.test_connection(tmp)
-    if not ok:
-        raise HTTPException(400, "Could not connect to database. Check credentials and network.")
-    return {"status": "success", "message": "Connection successful"}
-
-
 @router.post("/connect-db", status_code=201)
 async def connect_db(
     req: ConnectDBRequest,

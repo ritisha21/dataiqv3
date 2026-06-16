@@ -160,9 +160,7 @@ function ModelCard({ model: m }: { model: any }) {
   // Smart form fields
   const [salesAgent, setSalesAgent] = useState('Anna Snelling')
   const [product, setProduct] = useState('GTXPro')
-  const [closeValue, setCloseValue] = useState('5000')
   const [createdDate, setCreatedDate] = useState('2017-01-01')
-  const [closeDate, setCloseDate] = useState('2017-03-01')
 
   const dateToUnix = (d: string) => Math.floor(new Date(d).getTime() / 1000)
 
@@ -172,9 +170,7 @@ function ModelCard({ model: m }: { model: any }) {
       const input_data: any = {
         sales_agent: salesAgent,
         product: product,
-        close_value: parseFloat(closeValue) || 0,
         created_date: dateToUnix(createdDate),
-        close_date: dateToUnix(closeDate),
       }
       const { data } = await modelsApi.predict({ model_id: m.id, input_data })
       setPredResult(data.prediction)
@@ -281,38 +277,13 @@ function ModelCard({ model: m }: { model: any }) {
                   </select>
                 </div>
 
-                {/* Deal Value */}
-                <div>
-                  <label className="block text-xs text-muted mb-1">Deal Value ($)</label>
-                  <input
-                    type="number"
-                    value={closeValue}
-                    onChange={e => setCloseValue(e.target.value)}
-                    placeholder="5000"
-                    className="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 text-sm
-                               text-white focus:outline-none focus:border-accent"
-                  />
-                </div>
-
-                {/* Created Date */}
+                {/* Deal Created */}
                 <div>
                   <label className="block text-xs text-muted mb-1">Deal Created</label>
                   <input
                     type="date"
                     value={createdDate}
                     onChange={e => setCreatedDate(e.target.value)}
-                    className="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 text-sm
-                               text-white focus:outline-none focus:border-accent"
-                  />
-                </div>
-
-                {/* Close Date */}
-                <div>
-                  <label className="block text-xs text-muted mb-1">Expected Close</label>
-                  <input
-                    type="date"
-                    value={closeDate}
-                    onChange={e => setCloseDate(e.target.value)}
                     className="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 text-sm
                                text-white focus:outline-none focus:border-accent"
                   />

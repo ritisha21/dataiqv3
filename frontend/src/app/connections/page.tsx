@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { connectionsApi } from '@/lib/api'
 import { useConnectionStore } from '@/lib/store'
 import toast from 'react-hot-toast'
-import { Database, Plus, Check, Loader2, ChevronDown, ChevronRight, Table } from 'lucide-react'
+import { Database, Plus, Check, Loader2, ChevronDown, ChevronRight, Table, Plug } from 'lucide-react'
 
 export default function ConnectionsPage() {
   const [showForm, setShowForm] = useState(false)
@@ -78,6 +78,16 @@ function ConnectForm({ onSubmit, loading }: any) {
   const handleDbTypeChange = (t: string) =>
     setF(p => ({ ...p, db_type: t, port: t === 'mysql' ? '3306' : '5432' }))
 
+  const testMutation = useMutation({
+    mutationFn: (data: any) => connectionsApi.testConnection(data),
+    onSuccess: () => toast.success('Connection successful!'),
+    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Connection test failed'),
+  })
+
+  const handleTest = () => {
+    testMutation.mutate({ ...f, port: Number(f.port) })
+  }
+
   return (
     <div className="glass p-6 space-y-4 animate-slide-up">
       <h3 className="font-medium text-sm">New Connection</h3>
@@ -99,12 +109,24 @@ function ConnectForm({ onSubmit, loading }: any) {
           <Field label="Password" type="password" value={f.password} onChange={set('password')} />
         </div>
       </div>
-      <button onClick={() => onSubmit({ ...f, port: Number(f.port) })} disabled={loading}
-        className="flex items-center gap-2 px-4 py-2 bg-accent hover:bg-accent-hover
-                   disabled:opacity-50 rounded-lg text-sm transition-all">
-        {loading ? <Loader2 size={14} className="animate-spin" /> : <Database size={14} />}
-        Connect
-      </button>
+      <div className="flex items-center gap-2">
+        <button onClick={() => onSubmit({ ...f, port: Number(f.port) })} disabled={loading}
+          className="flex items-center gap-2 px-4 py-2 bg-accent hover:bg-accent-hover
+                     disabled:opacity-50 rounded-lg text-sm transition-all">
+          {loading ? <Loader2 size={14} className="animate-spin" /> : <Database size={14} />}
+          Connect
+        </button>
+        <button onClick={handleTest} disabled={testMutation.isPending}
+          className="flex items-center gap-2 px-4 py-2 bg-surface-3 hover:bg-surface-2
+                     border border-border disabled:opacity-50 rounded-lg text-sm transition-all">
+          {testMutation.isPending
+            ? <Loader2 size={14} className="animate-spin" />
+            : testMutation.isSuccess
+              ? <Check size={14} className="text-emerald-400" />
+              : <Plug size={14} />}
+          Test Connection
+        </button>
+      </div>
     </div>
   )
 }
