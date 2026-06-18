@@ -1,8 +1,7 @@
 'use client'
-import { useState } from 'react'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { api } from '@/lib/api'
-import { useConnectionStore } from '@/lib/store'
+import { useConnectionStore, useETLStore } from '@/lib/store'
 import toast from 'react-hot-toast'
 import {
   ScanLine, BrainCircuit, ChevronDown, ChevronUp,
@@ -48,11 +47,10 @@ const TAG_COLORS: Record<string, string> = {
 
 export default function ETLPage() {
   const { selectedConnectionId } = useConnectionStore()
-  const [scanResult, setScanResult]   = useState<{ tables: TableProfile[]; suggestions: Suggestion[] } | null>(null)
-  const [selected, setSelected]       = useState<Set<string>>(new Set())
-  const [expandedTable, setExpandedTable] = useState<string | null>(null)
-  const [taskId, setTaskId]           = useState<string | null>(null)
-  const [trainResults, setTrainResults] = useState<any[]>([])
+  const {
+    scanResult, selected, trainResults, taskId, expandedTable,
+    setScanResult, setSelected, setTrainResults, setTaskId, setExpandedTable,
+  } = useETLStore()
 
   const scanMutation = useMutation({
     mutationFn: () => api.post('/etl/scan', { connection_id: selectedConnectionId }),
@@ -73,7 +71,6 @@ export default function ETLPage() {
     onSuccess: (res) => {
       setTaskId(res.data.task_id)
       toast.success(`Training ${res.data.count} model(s) started`)
-      // poll for results
       pollResults(res.data.task_id)
     },
     onError: (e: any) => toast.error(e?.response?.data?.detail || 'Training failed'),
@@ -86,9 +83,11 @@ export default function ETLPage() {
         if (res.data.state === 'SUCCESS') {
           clearInterval(interval)
           setTrainResults(res.data.result?.results || [])
+          setTaskId(null)
           toast.success('All models trained!')
         } else if (res.data.state === 'FAILURE') {
           clearInterval(interval)
+          setTaskId(null)
           toast.error('Training failed')
         }
       } catch { clearInterval(interval) }
@@ -96,11 +95,9 @@ export default function ETLPage() {
   }
 
   const toggleSelect = (id: string) => {
-    setSelected(prev => {
-      const next = new Set(prev)
-      next.has(id) ? next.delete(id) : next.add(id)
-      return next
-    })
+    const next = new Set(selected)
+    next.has(id) ? next.delete(id) : next.add(id)
+    setSelected(next)
   }
 
   const toggleAll = () => {
@@ -108,7 +105,7 @@ export default function ETLPage() {
     if (selected.size === scanResult.suggestions.length) {
       setSelected(new Set())
     } else {
-      setSelected(new Set(scanResult.suggestions.map(s => s.id)))
+      setSelected(new Set(scanResult.suggestions.map((s: any) => s.id)))
     }
   }
 
@@ -124,7 +121,6 @@ export default function ETLPage() {
 
   return (
     <div className="p-6 space-y-6 animate-fade-in max-w-5xl">
-      {/* Header */}
       <div className="flex items-start justify-between">
         <div>
           <h1 className="text-xl font-semibold">ETL Pipeline</h1>
@@ -145,7 +141,6 @@ export default function ETLPage() {
         </button>
       </div>
 
-      {/* Step indicator */}
       <div className="flex items-center gap-3 text-xs text-muted">
         <div className={`flex items-center gap-1.5 ${scanResult ? 'text-emerald-400' : ''}`}>
           <div className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-medium
@@ -159,14 +154,24 @@ export default function ETLPage() {
           Select features
         </div>
         <div className="w-8 h-px bg-border" />
-        <div className={`flex items-center gap-1.5 ${trainResults.length > 0 ? 'text-emerald-400' : ''}`}>
+        <div className={`flex items-center gap-1.5 ${trainResults.length > 0 ? 'text-emerald-400': ''}`}>
           <div className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-medium
             ${trainResults.length > 0 ? 'bg-emerald-500/20 text-emerald-400' : 'bg-surface-3 text-muted'}`}>3</div>
           Train models
         </div>
       </div>
 
-      {/* Scan results — tables overview */}
+      {/* In-progress training banner — persists across navigation */}
+      {taskId && (
+        <div className="glass border border-yellow-500/30 p-4 flex items-center gap-3">
+          <Loader2 size={16} className="animate-spin text-yellow-400" />
+          <div>
+            <p className="text-sm font-medium text-yellow-400">Training in progress</p>
+            <p className="text-xs text-muted">Models are training in the background. You can navigate away — results will appear when done.</p>
+          </div>
+        </div>
+      )}
+
       {scanResult && (
         <div className="glass p-4 space-y-3">
           <div className="flex items-center justify-between">
@@ -174,10 +179,10 @@ export default function ETLPage() {
               <TableProperties size={14} className="text-accent" />
               {scanResult.tables.length} tables found
             </h2>
-            <span className="text-xs text-muted">{scanResult.tables.reduce((a, t) => a + t.row_count, 0).toLocaleString()} total rows</span>
+            <span className="text-xs text-muted">{scanResult.tables.reduce((a: number, t: any) => a + t.row_count, 0).toLocaleString()} total rows</span>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-            {scanResult.tables.map(t => (
+            {scanResult.tables.map((t: any) => (
               <button key={t.name} onClick={() => setExpandedTable(expandedTable === t.name ? null : t.name)}
                 className={`text-left p-3 rounded-lg border transition-all
                   ${expandedTable === t.name
@@ -188,18 +193,15 @@ export default function ETLPage() {
                   {expandedTable === t.name ? <ChevronUp size={12} className="text-muted" /> : <ChevronDown size={12} className="text-muted" />}
                 </div>
                 <div className="text-xs text-muted">{t.row_count.toLocaleString()} rows · {t.column_count} cols</div>
-
                 {expandedTable === t.name && (
                   <div className="mt-2 pt-2 border-t border-border space-y-1">
-                    {t.columns.slice(0, 8).map(c => (
+                    {t.columns.slice(0, 8).map((c: any) => (
                       <div key={c.name} className="flex items-center justify-between">
                         <span className="text-xs truncate" style={{ maxWidth: '120px' }}>{c.name}</span>
                         <span className={`text-xs font-mono ${TAG_COLORS[c.tag] || 'text-muted'}`}>{c.tag}</span>
                       </div>
                     ))}
-                    {t.columns.length > 8 && (
-                      <p className="text-xs text-muted">+{t.columns.length - 8} more</p>
-                    )}
+                    {t.columns.length > 8 && <p className="text-xs text-muted">+{t.columns.length - 8} more</p>}
                   </div>
                 )}
               </button>
@@ -208,7 +210,6 @@ export default function ETLPage() {
         </div>
       )}
 
-      {/* Suggestions */}
       {scanResult && scanResult.suggestions.length > 0 && (
         <div className="space-y-3">
           <div className="flex items-center justify-between">
@@ -227,7 +228,7 @@ export default function ETLPage() {
           </div>
 
           <div className="space-y-2">
-            {scanResult.suggestions.map(s => (
+            {scanResult.suggestions.map((s: any) => (
               <SuggestionCard
                 key={s.id}
                 suggestion={s}
@@ -237,7 +238,6 @@ export default function ETLPage() {
             ))}
           </div>
 
-          {/* Train button */}
           {selected.size > 0 && (
             <div className="sticky bottom-4 pt-2">
               <button
@@ -263,14 +263,13 @@ export default function ETLPage() {
         </div>
       )}
 
-      {/* Train results */}
       {trainResults.length > 0 && (
         <div className="glass p-4 space-y-3">
           <h2 className="text-sm font-medium flex items-center gap-2">
             <BarChart2 size={14} className="text-accent" />
             Training results
           </h2>
-          {trainResults.map((r, i) => (
+          {trainResults.map((r: any, i: number) => (
             <div key={i} className={`p-3 rounded-lg border ${
               r.status === 'success'
                 ? 'border-emerald-500/20 bg-emerald-500/5'
@@ -279,9 +278,7 @@ export default function ETLPage() {
               <div className="flex items-center justify-between mb-1">
                 <span className="text-sm font-medium">{r.table} → {r.target_column}</span>
                 <span className={`text-xs px-2 py-0.5 rounded-full ${
-                  r.status === 'success'
-                    ? 'bg-emerald-500/20 text-emerald-400'
-                    : 'bg-red-500/20 text-red-400'
+                  r.status === 'success' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'
                 }`}>{r.status}</span>
               </div>
               {r.metrics && (
@@ -304,26 +301,16 @@ export default function ETLPage() {
   )
 }
 
-function SuggestionCard({
-  suggestion: s, selected, onToggle
-}: {
-  suggestion: Suggestion
-  selected: boolean
-  onToggle: () => void
+function SuggestionCard({ suggestion: s, selected, onToggle }: {
+  suggestion: Suggestion; selected: boolean; onToggle: () => void
 }) {
   return (
-    <button
-      onClick={onToggle}
+    <button onClick={onToggle}
       className={`w-full text-left p-4 rounded-xl border transition-all
-        ${selected
-          ? 'border-accent/60 bg-accent/8 shadow-sm'
-          : 'border-border bg-surface-2 hover:border-accent/30'}`}
-    >
+        ${selected ? 'border-accent/60 bg-accent/8 shadow-sm' : 'border-border bg-surface-2 hover:border-accent/30'}`}>
       <div className="flex items-start gap-3">
         <div className="mt-0.5 flex-shrink-0">
-          {selected
-            ? <CheckSquare size={16} className="text-accent" />
-            : <Square size={16} className="text-muted" />}
+          {selected ? <CheckSquare size={16} className="text-accent" /> : <Square size={16} className="text-muted" />}
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1">

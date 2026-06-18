@@ -1,16 +1,19 @@
 'use client'
-import { useQuery } from '@tanstack/react-query'
-import { dashboardApi } from '@/lib/api'
+import { useState } from 'react'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { dashboardApi, modelsApi } from '@/lib/api'
 import { useConnectionStore } from '@/lib/store'
-import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
-         XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
-import { TrendingUp, Database, Loader2, AlertCircle } from 'lucide-react'
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
+import { TrendingUp, Database, Loader2, AlertCircle, Sparkles, ArrowRight, Zap, CheckCircle2, Target } from 'lucide-react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
+import toast from 'react-hot-toast'
 
 const COLORS = ['#6c63ff', '#00e599', '#f59e0b', '#ef4444', '#3b82f6']
 
 export default function DashboardPage() {
   const { selectedConnectionId } = useConnectionStore()
+  const router = useRouter()
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['dashboard', selectedConnectionId],
@@ -46,10 +49,10 @@ export default function DashboardPage() {
     </div>
   )
 
-  const kpis    = data?.widgets?.filter((w: any) => w.type === 'kpi')  || []
-  const stats   = data?.widgets?.filter((w: any) => w.type === 'stat') || []
-  const charts  = data?.widgets?.filter((w: any) => w.type === 'chart')|| []
-  const models  = data?.models  || []
+  const kpis   = data?.widgets?.filter((w: any) => w.type === 'kpi')   || []
+  const stats  = data?.widgets?.filter((w: any) => w.type === 'stat')  || []
+  const charts = data?.widgets?.filter((w: any) => w.type === 'chart') || []
+  const models = data?.models  || []
   const queries = data?.recent_queries || []
 
   return (
@@ -60,7 +63,7 @@ export default function DashboardPage() {
       </div>
 
       {/* KPI row */}
-      {kpis.length > 0 && (
+      {(kpis.length > 0 || stats.length > 0) && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           {kpis.map((w: any, i: number) => (
             <div key={i} className="glass p-4">
@@ -73,14 +76,15 @@ export default function DashboardPage() {
               <p className="text-xs text-muted mb-1">{w.title}</p>
               <p className="text-2xl font-bold">{w.value?.toLocaleString()}</p>
               {w.min != null && (
-                <p className="text-xs text-muted mt-1">
-                  min {w.min} · max {w.max}
-                </p>
+                <p className="text-xs text-muted mt-1">min {w.min} · max {w.max}</p>
               )}
             </div>
           ))}
         </div>
       )}
+
+      {/* CRM Model Opportunities — always shown when connection active */}
+      <CRMOpportunitiesPanel connectionId={selectedConnectionId} />
 
       {/* Charts */}
       {charts.length > 0 && (
@@ -113,19 +117,22 @@ export default function DashboardPage() {
             {queries.length === 0 && <p className="text-muted text-sm">No queries yet</p>}
             {queries.map((q: any) => (
               <div key={q.id} className="flex items-start gap-2 py-2 border-b border-border last:border-0">
-                <div className={`w-1.5 h-1.5 rounded-full mt-1.5 ${q.success ? 'bg-emerald-glow' : 'bg-red-400'}`} />
+                <div className={`w-1.5 h-1.5 rounded-full mt-1.5 ${q.success ? 'bg-emerald-400' : 'bg-red-400'}`} />
                 <div className="flex-1 min-w-0">
                   <p className="text-sm truncate">{q.question}</p>
-                  <p className="text-xs text-muted">{q.row_count ?? '–'} rows</p>
+                  <p className="text-xs text-muted">{q.row_count ?? '—'} rows</p>
                 </div>
               </div>
             ))}
           </div>
         </div>
 
-        {/* Models */}
+        {/* Trained models */}
         <div className="glass p-4">
-          <h3 className="text-sm font-medium mb-3">Models</h3>
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-medium">Trained Models</h3>
+            <Link href="/models" className="text-xs text-accent hover:underline">View all →</Link>
+          </div>
           <div className="space-y-2">
             {models.length === 0 && <p className="text-muted text-sm">No models trained yet</p>}
             {models.map((m: any) => (
@@ -140,6 +147,170 @@ export default function DashboardPage() {
           </div>
         </div>
       </div>
+    </div>
+  )
+}
+
+function CRMOpportunitiesPanel({ connectionId }: { connectionId: string }) {
+  const router = useRouter()
+  const qc = useQueryClient()
+  const [selectedGoal, setSelectedGoal] = useState<string | null>(null)
+  const [recommendation, setRecommendation] = useState<any>(null)
+  const [showRec, setShowRec] = useState(false)
+
+  const { data: availableGoals = [], isLoading } = useQuery({
+    queryKey: ['available-goals', connectionId],
+    queryFn:  () => modelsApi.availableGoals(connectionId).then(r => r.data),
+  })
+
+  const recommendMutation = useMutation({
+    mutationFn: (data: any) => modelsApi.recommend(data),
+    onSuccess: (r: any) => {
+      setRecommendation(r.data)
+      setShowRec(true)
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Failed to get recommendation'),
+  })
+
+  const trainMutation = useMutation({
+    mutationFn: (d: any) => modelsApi.train(d),
+    onSuccess: () => {
+      toast.success('Training queued! Check the Models page.')
+      setShowRec(false)
+      setSelectedGoal(null)
+      setRecommendation(null)
+      qc.invalidateQueries({ queryKey: ['models'] })
+    },
+    onError: (e: any) => toast.error(e?.response?.data?.detail || 'Training failed'),
+  })
+
+  const handleGetRecommendation = () => {
+    if (!selectedGoal) return
+    recommendMutation.mutate({ connection_id: connectionId, goal_key: selectedGoal })
+  }
+
+  const handleTrain = () => {
+    if (!recommendation) return
+    trainMutation.mutate({
+      name: `${recommendation.crm_model} Model`,
+      goal: recommendation.ml_goal,
+      target_column: recommendation.target_col,
+      source_table: recommendation.source_table,
+      connection_id: connectionId,
+    })
+  }
+
+  return (
+    <div className="glass p-5 space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Sparkles size={16} className="text-accent" />
+          <h3 className="text-sm font-semibold">CRM Model Opportunities</h3>
+        </div>
+        <span className="text-xs text-muted">Based on your connected database</span>
+      </div>
+
+      {isLoading ? (
+        <div className="flex items-center gap-2 text-xs text-muted">
+          <Loader2 size={12} className="animate-spin" /> Analysing your schema…
+        </div>
+      ) : (
+        <>
+          <p className="text-xs text-muted">
+            {availableGoals.length} CRM models are possible with your data. Select a business goal to get started.
+          </p>
+
+          {!showRec ? (
+            <div className="space-y-3">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                {availableGoals.map((g: any) => (
+                  <button key={g.key} onClick={() => setSelectedGoal(g.key)}
+                    className={`text-left p-3 rounded-lg border transition-all
+                      ${selectedGoal === g.key
+                        ? 'border-accent bg-accent/10 text-white'
+                        : 'border-border bg-surface-2 text-muted hover:text-white hover:border-accent/50'}`}>
+                    <div className="text-sm font-medium">{g.label}</div>
+                    <div className="text-xs opacity-60 mt-0.5">{g.crm_model}</div>
+                  </button>
+                ))}
+              </div>
+              <button
+                onClick={handleGetRecommendation}
+                disabled={!selectedGoal || recommendMutation.isPending}
+                className="flex items-center gap-2 px-4 py-2 bg-accent hover:bg-accent-hover
+                           disabled:opacity-50 rounded-lg text-sm transition-all"
+              >
+                {recommendMutation.isPending
+                  ? <Loader2 size={14} className="animate-spin" />
+                  : <Sparkles size={14} />}
+                Get CRM Model Recommendation
+              </button>
+            </div>
+          ) : recommendation && (
+            <div className="space-y-3">
+              {/* Recommendation card */}
+              <div className="bg-surface-3 rounded-xl p-4 space-y-3">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <p className="text-xs text-muted mb-1">RECOMMENDED MODEL</p>
+                    <p className="font-semibold text-accent text-base">{recommendation.crm_model}</p>
+                    <p className="text-xs text-muted mt-1">{recommendation.description}</p>
+                  </div>
+                  <span className="px-2 py-1 bg-accent/20 text-accent rounded text-xs font-medium shrink-0 ml-2">
+                    {recommendation.ml_model}
+                  </span>
+                </div>
+                <div className="border-t border-border pt-3 text-xs text-muted">
+                  <p className="font-medium text-white mb-1">Business Value</p>
+                  <p>{recommendation.business_value}</p>
+                </div>
+                <div className="border-t border-border pt-3 grid grid-cols-2 gap-3 text-xs">
+                  <div>
+                    <p className="text-muted mb-1">Table</p>
+                    <p className="text-white font-mono">{recommendation.source_table}</p>
+                  </div>
+                  <div>
+                    <p className="text-muted mb-1">Target</p>
+                    <p className="text-white font-mono">{recommendation.target_col}</p>
+                  </div>
+                </div>
+                <div className="border-t border-border pt-3 text-xs">
+                  <p className="text-muted mb-1">Features</p>
+                  <div className="flex flex-wrap gap-1">
+                    {recommendation.feature_cols?.map((f: string) => (
+                      <span key={f} className="px-2 py-0.5 bg-surface-2 rounded font-mono text-white">{f}</span>
+                    ))}
+                  </div>
+                </div>
+                <div className={`flex items-center gap-1.5 text-xs ${recommendation.data_quality === 'good' ? 'text-emerald-400' : 'text-yellow-400'}`}>
+                  {recommendation.data_quality === 'good'
+                    ? <CheckCircle2 size={12} />
+                    : <AlertCircle size={12} />}
+                  {recommendation.data_quality_note}
+                </div>
+              </div>
+
+              <div className="flex gap-2">
+                <button onClick={() => { setShowRec(false); setRecommendation(null) }}
+                  className="px-4 py-2 bg-surface-3 hover:bg-surface-2 border border-border rounded-lg text-sm transition-all">
+                  ← Back
+                </button>
+                <button onClick={handleTrain} disabled={trainMutation.isPending}
+                  className="flex items-center gap-2 px-4 py-2 bg-accent hover:bg-accent-hover
+                             disabled:opacity-50 rounded-lg text-sm transition-all">
+                  {trainMutation.isPending ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />}
+                  Train {recommendation.crm_model}
+                </button>
+                <Link href="/models"
+                  className="flex items-center gap-2 px-4 py-2 bg-surface-3 hover:bg-surface-2
+                             border border-border rounded-lg text-sm transition-all">
+                  View Models <ArrowRight size={14} />
+                </Link>
+              </div>
+            </div>
+          )}
+        </>
+      )}
     </div>
   )
 }
