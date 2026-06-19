@@ -236,9 +236,13 @@ async def available_goals(
     if not snapshot:
         return []
     schema_tables = snapshot.schema_graph.get("nodes", [])
+    db_classification = snapshot.schema_graph.get("db_classification", {})
     available = detect_available_models(schema_tables)
     all_goals = {g["key"]: g for g in get_all_goals()}
-    return [all_goals[k] for k in available if k in all_goals]
+    return {
+        "db_classification": db_classification,
+        "available_goals": [all_goals[k] for k in available if k in all_goals],
+    }
 
 
 @router.post("/goals/recommend")

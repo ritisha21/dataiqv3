@@ -1,7 +1,7 @@
 import asyncio
 import httpx
 
-TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkZXZAZGF0YWlxLmNvbSIsInRlbmFudF9pZCI6IjAwMDAwMDAwLTAwMDAtMDAwMC0wMDAwLTAwMDAwMDAwMDAwMSIsInRlbmFudF9zbHVnIjoiZGV2Iiwicm9sZSI6ImFkbWluIiwiZXhwIjoxNzgxNTkxMzE4LCJ0eXBlIjoiYWNjZXNzIn0.okH9D5yBLfd4uUohxoaIIaINeIebuctsonukiAdl6dQ"
+TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkZXZAZGF0YWlxLmNvbSIsInRlbmFudF9pZCI6IjAwMDAwMDAwLTAwMDAtMDAwMC0wMDAwLTAwMDAwMDAwMDAwMSIsInRlbmFudF9zbHVnIjoiZGV2Iiwicm9sZSI6ImFkbWluIiwiZXhwIjoxNzgxODQ4NjI0LCJ0eXBlIjoiYWNjZXNzIn0.jlGvMnM2SUrJeEbKa1OMLGNjK-68hUShoj_wKAHptEI"
 async def test():
     async with httpx.AsyncClient() as client:
         resp = await client.post(

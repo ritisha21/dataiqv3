@@ -44,6 +44,10 @@ def introspect_schema_task(self, connection_id: str, tenant_id: str):
         # Introspect
         graph = connector_service.introspect_schema(mock)
         semantic_mappings = semantic_engine.classify_schema(graph.to_dict(), connection_id)
+        # Classify DB type (CRM/ERP/Hybrid)
+        from app.infrastructure.ml_pipeline.goal_mapper import classify_db
+        graph_dict = graph.to_dict()
+        graph_dict["db_classification"] = classify_db(graph_dict.get("nodes", []))
 
         # Get current version
         with db_engine.connect() as conn:
@@ -62,7 +66,7 @@ def introspect_schema_task(self, connection_id: str, tenant_id: str):
                 "tenant_id": tenant_id,
                 "connection_id": connection_id,
                 "version": current_version,
-                "schema_graph": json.dumps(graph.to_dict()),
+                "schema_graph": json.dumps(graph_dict),
                 "table_count": len(graph.nodes),
             })
 

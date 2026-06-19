@@ -242,3 +242,48 @@ def get_all_goals() -> List[Dict]:
         {"key": k, "label": v["label"], "crm_model": v["crm_model"], "ml_model": v["ml_model"]}
         for k, v in GOAL_CATALOGUE.items()
     ]
+
+# ── DB Classification ─────────────────────────────────────────────────────────
+
+CRM_TABLE_SIGNALS = {
+    "leads", "opportunities", "deals", "contacts", "accounts", "customers",
+    "sales_pipeline", "pipeline", "prospects", "campaigns", "activities",
+    "subscriptions", "churn", "retention", "support_tickets", "tickets"
+}
+
+ERP_TABLE_SIGNALS = {
+    "invoices", "purchase_orders", "inventory", "warehouse", "shipments",
+    "suppliers", "vendors", "general_ledger", "payroll", "assets",
+    "cost_centers", "budgets", "procurement"
+}
+
+
+def classify_db(schema_tables: List[Dict]) -> Dict[str, Any]:
+    """
+    Classify a database as CRM, ERP, or Hybrid based on table names.
+    Returns classification + confidence + matched signals.
+    """
+    table_names = {t.get("id", "").lower() for t in schema_tables}
+    crm_hits = table_names & CRM_TABLE_SIGNALS
+    erp_hits = table_names & ERP_TABLE_SIGNALS
+
+    if crm_hits and erp_hits:
+        db_type = "Hybrid"
+        confidence = 0.75
+    elif crm_hits:
+        db_type = "CRM"
+        confidence = min(0.6 + len(crm_hits) * 0.1, 0.99)
+    elif erp_hits:
+        db_type = "ERP"
+        confidence = min(0.6 + len(erp_hits) * 0.1, 0.99)
+    else:
+        db_type = "Unknown"
+        confidence = 0.3
+
+    return {
+        "db_type": db_type,
+        "confidence": round(confidence, 2),
+        "crm_signals": list(crm_hits),
+        "erp_signals": list(erp_hits),
+        "suitable_for": "CRM predictive models" if db_type in ("CRM", "Hybrid") else "ERP analytics",
+    }
