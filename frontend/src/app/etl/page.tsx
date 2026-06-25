@@ -2,6 +2,7 @@
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { api } from '@/lib/api'
 import { useConnectionStore, useETLStore } from '@/lib/store'
+import { useClassificationStore } from '@/lib/classificationStore'
 import toast from 'react-hot-toast'
 import {
   ScanLine, BrainCircuit, ChevronDown, ChevronUp,
@@ -52,12 +53,31 @@ export default function ETLPage() {
     setScanResult, setSelected, setTrainResults, setTaskId, setExpandedTable,
   } = useETLStore()
 
+  // ── Classification store — triggered after every successful scan ───────────
+  const { classify, setAvailableTables, setConnection } = useClassificationStore()
+
   const scanMutation = useMutation({
     mutationFn: () => api.post('/etl/scan', { connection_id: selectedConnectionId }),
-    onSuccess: (res) => {
+    onSuccess: async (res) => {
       setScanResult(res.data)
       setSelected(new Set())
       toast.success(`Found ${res.data.suggestions.length} possible features`)
+
+      // ── Auto-classify the schema after every scan ─────────────────────────
+      // Store the table names for AI chat context
+      const tableNames: string[] = (res.data.tables || []).map((t: any) => t.name)
+      setAvailableTables(tableNames)
+
+      // Trigger classification — this hits POST /api/v1/scan/classify
+      // and populates dbType + availableModels in the store
+      if (selectedConnectionId) {
+        setConnection(selectedConnectionId, '', undefined)
+        try {
+          await classify(selectedConnectionId, '')
+        } catch {
+          // Non-fatal — classification failing shouldn't block ETL flow
+        }
+      }
     },
     onError: (e: any) => toast.error(e?.response?.data?.detail || 'Scan failed'),
   })
@@ -161,7 +181,7 @@ export default function ETLPage() {
         </div>
       </div>
 
-      {/* In-progress training banner — persists across navigation */}
+      {/* In-progress training banner */}
       {taskId && (
         <div className="glass border border-yellow-500/30 p-4 flex items-center gap-3">
           <Loader2 size={16} className="animate-spin text-yellow-400" />

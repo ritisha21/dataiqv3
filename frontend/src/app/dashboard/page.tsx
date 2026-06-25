@@ -3,16 +3,19 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { dashboardApi, modelsApi } from '@/lib/api'
 import { useConnectionStore } from '@/lib/store'
+import { useClassificationStore } from '@/lib/classificationStore'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
 import { TrendingUp, Database, Loader2, AlertCircle, Sparkles, ArrowRight, Zap, CheckCircle2, Target } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import toast from 'react-hot-toast'
+import GraphSelector from '@/components/charts/GraphSelector'
 
 const COLORS = ['#6c63ff', '#00e599', '#f59e0b', '#ef4444', '#3b82f6']
 
 export default function DashboardPage() {
   const { selectedConnectionId } = useConnectionStore()
+  const { availableTables } = useClassificationStore()
   const router = useRouter()
 
   const { data, isLoading, error } = useQuery({
@@ -49,11 +52,17 @@ export default function DashboardPage() {
     </div>
   )
 
-  const kpis   = data?.widgets?.filter((w: any) => w.type === 'kpi')   || []
-  const stats  = data?.widgets?.filter((w: any) => w.type === 'stat')  || []
-  const charts = data?.widgets?.filter((w: any) => w.type === 'chart') || []
-  const models = data?.models  || []
+  const kpis    = data?.widgets?.filter((w: any) => w.type === 'kpi')   || []
+  const stats   = data?.widgets?.filter((w: any) => w.type === 'stat')  || []
+  const charts  = data?.widgets?.filter((w: any) => w.type === 'chart') || []
+  const models  = data?.models  || []
   const queries = data?.recent_queries || []
+
+  // Build a flat list of all column names from all chart widgets for GraphSelector
+  const allChartData: Record<string, unknown>[] = charts.flatMap((w: any) => w.data || [])
+  const allChartCols: string[] = allChartData.length > 0
+    ? Object.keys(allChartData[0])
+    : []
 
   return (
     <div className="p-6 space-y-6 animate-fade-in">
@@ -83,10 +92,20 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* CRM Model Opportunities — always shown when connection active */}
+      {/* CRM Model Opportunities */}
       <CRMOpportunitiesPanel connectionId={selectedConnectionId} />
 
-      {/* Charts */}
+      {/* Graph Selector — interactive chart explorer */}
+      {allChartData.length > 0 && allChartCols.length > 0 && (
+        <GraphSelector
+          data={allChartData}
+          availableCols={allChartCols}
+          title="Data Explorer"
+          height={280}
+        />
+      )}
+
+      {/* Static charts from dashboard API */}
       {charts.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {charts.map((w: any, i: number) => (
@@ -248,7 +267,6 @@ function CRMOpportunitiesPanel({ connectionId }: { connectionId: string }) {
             </div>
           ) : recommendation && (
             <div className="space-y-3">
-              {/* Recommendation card */}
               <div className="bg-surface-3 rounded-xl p-4 space-y-3">
                 <div className="flex items-start justify-between">
                   <div>
