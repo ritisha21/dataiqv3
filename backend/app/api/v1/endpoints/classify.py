@@ -1,9 +1,5 @@
 """
 backend/app/api/v1/endpoints/classify.py
-─────────────────────────────────────────
-Endpoints:
-  POST /api/v1/scan/classify          — scan + classify a connection's schema
-  GET  /api/v1/classify/models/type/{db_type}  — list models for a db type
 """
 
 from __future__ import annotations
@@ -11,7 +7,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import Dict, Any, List, Optional
-from sqlalchemy import create_engine, inspect as sa_inspect
+from sqlalchemy import create_engine, inspect as sa_inspect, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,7 +17,7 @@ from app.infrastructure.ml_pipeline.db_classifier import (
     get_available_models_for_type,
 )
 from app.db.database import get_db
-from app.domain.models.models import Connection
+from app.domain.models.models import DBConnection
 
 router = APIRouter()
 
@@ -59,47 +55,30 @@ async def _resolve_connection_string(
     direct: Optional[str],
     db: AsyncSession,
 ) -> str:
-    """
-    1. If the caller passed connection_string directly, use it.
-    2. Otherwise look up the Connection row by ID.
-    """
     if direct:
         return direct
 
     result = await db.execute(
-        Connection.__table__.select().where(
-            Connection.id == connection_id
-        )
+        select(DBConnection).where(DBConnection.id == connection_id)
     )
-    row = result.fetchone()
+    conn = result.scalar_one_or_none()
 
-    if not row:
+    if not conn:
         raise HTTPException(
             status_code=404,
             detail=f"Connection {connection_id!r} not found.",
         )
 
-    # Build the connection string from stored fields
-    # Adjust field names to match your Connection model columns
-    conn_str = row.connection_string if hasattr(row, "connection_string") else None
+    # Build connection string from stored fields
+    # encrypted_password is used as-is here — if your app decrypts it elsewhere,
+    # swap conn.encrypted_password for the decrypted value
+    db_type_str = conn.db_type.value if hasattr(conn.db_type, "value") else str(conn.db_type)
+    dialect = "postgresql" if db_type_str == "postgres" else db_type_str
 
-    if not conn_str:
-        # Fallback: build from individual fields if you store host/port/db separately
-        try:
-            conn_str = (
-                f"{row.db_type}://{row.username}:{row.password}"
-                f"@{row.host}:{row.port}/{row.database}"
-            )
-        except AttributeError:
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    "Cannot resolve connection string. "
-                    "Pass connection_string directly in the request body."
-                ),
-            )
-
-    return conn_str
+    return (
+        f"{dialect}://{conn.username}:{conn.encrypted_password}"
+        f"@{conn.host}:{conn.port}/{conn.database}"
+    )
 
 
 # ─── POST /scan/classify ──────────────────────────────────────────────────────
@@ -109,13 +88,6 @@ async def classify_connection(
     req: ClassifyRequest,
     db: AsyncSession = Depends(get_db),
 ) -> ClassificationResponse:
-    """
-    Inspects the schema of a stored connection and classifies it as
-    CRM, ERP, Hybrid, or Unknown. Returns the matching prediction models.
-
-    Call this automatically after every schema scan so the Models page
-    and AI chat always know what type of database is connected.
-    """
     conn_str = await _resolve_connection_string(req.connection_id, req.connection_string, db)
 
     try:
@@ -161,12 +133,6 @@ async def classify_connection(
 
 @router.get("/classify/models/type/{db_type}", response_model=ModelListResponse)
 async def get_models_by_type(db_type: str) -> ModelListResponse:
-    """
-    Returns DataIQ's built-in prediction models for a given DB type.
-    No DB query needed — answers from the model registry in db_classifier.py.
-
-    Valid values: CRM, ERP, Hybrid, Unknown
-    """
     allowed = {"CRM", "ERP", "Hybrid", "Unknown"}
     if db_type not in allowed:
         raise HTTPException(
