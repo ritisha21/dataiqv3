@@ -13,11 +13,25 @@ from sklearn.metrics import (
 import xgboost as xgb
 from app.core.config import settings
 from app.domain.models.models import ModelGoal
+from app.infrastructure.ml_pipeline.feature_engineering import (
+    build_features, FEATURE_BUILDERS
+)
 import structlog
 
 logger = structlog.get_logger()
 
 RANDOM_SEED = 42
+
+# Map ModelGoal values to feature_engineering model_type keys
+GOAL_TO_MODEL_TYPE: Dict[str, str] = {
+    "churn":            "churn_prediction",
+    "churn_prediction": "churn_prediction",
+    "clv":              "clv_prediction",
+    "clv_prediction":   "clv_prediction",
+    "lead_scoring":     "lead_scoring",
+    "lead_score":       "lead_scoring",
+    # Goals without a dedicated feature builder fall through to generic path
+}
 
 
 class MLPipelineService:
@@ -28,6 +42,84 @@ class MLPipelineService:
 
     def __init__(self):
         os.makedirs(settings.ML_MODEL_DIR, exist_ok=True)
+
+    def _prepare_features(
+        self,
+        df: pd.DataFrame,
+        target_col: str,
+        goal: ModelGoal,
+        input_freq_maps: Optional[Dict],
+    ) -> Tuple[pd.DataFrame, Any, Dict, Optional[str]]:
+        """
+        Returns (X, y, freq_maps, model_type_used).
+
+        Uses build_features() for known CRM model types (churn, CLV, lead scoring).
+        Falls back to the original frequency-encoding path for everything else
+        so no existing functionality is broken.
+        """
+        goal_str = goal.value if hasattr(goal, "value") else str(goal)
+        model_type = GOAL_TO_MODEL_TYPE.get(goal_str)
+
+        # ── Path A: domain-aware feature engineering ─────────────────────────
+        if model_type and model_type in FEATURE_BUILDERS:
+            logger.info(
+                "feature_engineering_domain",
+                model_type=model_type,
+                goal=goal_str,
+            )
+            X_eng, y_eng, meta = build_features(df, model_type)
+
+            # If build_features found a target column, use it
+            if y_eng is not None:
+                logger.info(
+                    "feature_engineering_target_found",
+                    target_col=meta.get("target_col"),
+                    n_features=meta.get("n_features"),
+                    features=meta.get("feature_names"),
+                )
+                # Still need to handle any warnings (missing target etc.)
+                for w in meta.get("warnings", []):
+                    logger.warning("feature_engineering_warning", msg=w)
+
+                return X_eng, y_eng, {}, model_type
+
+            # build_features ran but found no target col — log and fall through
+            for w in meta.get("warnings", []):
+                logger.warning("feature_engineering_warning", msg=w)
+            logger.info(
+                "feature_engineering_no_target",
+                model_type=model_type,
+                hint=f"Add one of: {meta.get('warnings', [''])[0]}",
+            )
+            # Fall through to Path B using the engineered X but caller-supplied target
+            feature_cols = [c for c in df.columns if c != target_col]
+            df_work = df[feature_cols + [target_col]].copy()
+            df_work = df_work.dropna(subset=[target_col])
+            # Use engineered features but manually attach the supplied target
+            X = X_eng.loc[df_work.index] if len(X_eng) == len(df_work) else X_eng
+            y = df_work[target_col]
+            return X, y, {}, model_type
+
+        # ── Path B: original generic path (all other goals) ──────────────────
+        logger.info("feature_engineering_generic", goal=goal_str)
+        feature_cols = [c for c in df.columns if c != target_col]
+        df_work = df[feature_cols + [target_col]].copy()
+        df_work = df_work.dropna(subset=[target_col])
+
+        X = df_work[feature_cols].copy()
+        y = df_work[target_col]
+
+        freq_maps = {}
+        for col in X.columns:
+            if X[col].dtype == object:
+                freq_map = X[col].value_counts(normalize=True).to_dict()
+                freq_maps[col] = freq_map
+                X[col] = X[col].map(freq_map).fillna(0.0)
+
+        X = X.fillna(0).astype(float)
+        return X, y, freq_maps, None
+
+    # ─────────────────────────────────────────────────────────────────────────
 
     def train(
         self,
@@ -47,24 +139,19 @@ class MLPipelineService:
         logger.info("ml_training_start", model_id=model_id, goal=goal, target=target_col)
 
         df = df.copy()
-
-        # Drop remaining non-numeric non-target columns
-        feature_cols = [c for c in df.columns if c != target_col]
-        df = df[feature_cols + [target_col]].copy()
-
-        # Remove rows with null target
         df = df.dropna(subset=[target_col])
 
         if len(df) < 50:
             raise ValueError("Insufficient data: need at least 50 rows")
 
-        X = df[feature_cols]
-        y = df[target_col]
+        # ── Feature preparation (domain-aware or generic) ─────────────────────
+        X, y, freq_maps, model_type_used = self._prepare_features(
+            df, target_col, goal, input_freq_maps
+        )
 
         # Determine task type
         is_classification = goal in (ModelGoal.classification, ModelGoal.churn)
         if not is_classification:
-            # Revenue forecast + regression
             is_classification = len(y.unique()) <= 10 and y.dtype in (object, "category", bool)
 
         # Encode target if classification
@@ -76,17 +163,6 @@ class MLPipelineService:
             y = y.astype(int)
         else:
             y = y.astype(float)
-
-        # Frequency-encode string columns and save maps for predict
-        freq_maps = {}
-        for col in X.columns:
-            if X[col].dtype == object:
-                freq_map = X[col].value_counts(normalize=True).to_dict()
-                freq_maps[col] = freq_map
-                X[col] = X[col].map(freq_map).fillna(0.0)
-
-
-        X = X.fillna(0).astype(float)
 
         # Train/test split
         X_train, X_test, y_train, y_test = train_test_split(
@@ -177,7 +253,8 @@ class MLPipelineService:
             "feature_cols": X.columns.tolist(),
             "is_classification": is_classification,
             "goal": goal.value,
-            "freq_maps": input_freq_maps or {},
+            "freq_maps": freq_maps or input_freq_maps or {},
+            "model_type_used": model_type_used,  # track which feature path was used
         }
         joblib.dump(artifact, artifact_path)
 
@@ -191,6 +268,7 @@ class MLPipelineService:
                 "dataset_hash": dataset_hash,
                 "feature_cols": X.columns.tolist(),
                 "is_classification": is_classification,
+                "model_type_used": model_type_used,
             }, f)
 
         logger.info("ml_training_complete", model_id=model_id, metrics=metrics)
