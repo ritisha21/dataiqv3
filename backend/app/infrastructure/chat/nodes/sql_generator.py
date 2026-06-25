@@ -33,8 +33,45 @@ Rules:
   AND date_col < DATE_TRUNC('month', NOW())
 - For "drop" or trend questions: include time series data ordered by date
 
-Output ONLY the raw SQL, no explanation, no markdown fences, no semicolon at end.
+CRITICAL — tables that do NOT exist in any database (never query these):
+- crm_model
+- erp_model
+- model_registry
+- available_models
+- crm_config
+- prediction_models
+
+If the user asks "what models are available" or "what are the possible CRM models"
+or any similar question about DataIQ's prediction models, do NOT write SQL.
+Instead output exactly this token so the system can handle it:
+  NO_SQL_NEEDED:MODELS_QUESTION
+
+Only query tables that appear in the schema context provided below.
+If a table is not in the schema context, do not use it.
+
+Output ONLY the raw SQL (or the NO_SQL_NEEDED token), no explanation,
+no markdown fences, no semicolon at end.
 """
+
+# ── Static model knowledge injected when user asks about models ───────────────
+_MODELS_ANSWER = """DataIQ has these built-in prediction models — no database table needed:
+
+**CRM Models**
+- Churn Prediction — identifies customers likely to leave
+- Customer Lifetime Value — estimates total revenue per customer
+- Lead Scoring — scores leads by conversion probability
+- Upsell Propensity — finds customers ready to upgrade
+- NPS Prediction — predicts satisfaction score before surveying
+- Next Best Action — recommends optimal engagement action per customer
+
+**ERP Models**
+- Demand Forecasting — forecasts product/material demand
+- Inventory Optimisation — recommends reorder points and safety stock
+- Supplier Risk Score — flags unreliable suppliers
+- Cost Variance Prediction — predicts budget overruns
+- Predictive Maintenance — flags assets likely to fail
+
+To train any of these, go to the Models page and select your goal."""
 
 
 def sql_generator_node(state: ChatState) -> ChatState:
@@ -66,6 +103,19 @@ def sql_generator_node(state: ChatState) -> ChatState:
 
         # Strip any stray markdown the LLM might have added
         cleaned = _strip_markdown(raw_sql)
+
+        # ── Intercept model-knowledge questions ──────────────────────────────
+        # The LLM signals it can't answer with SQL by returning this token.
+        # We short-circuit here and return the static answer instead.
+        if cleaned.startswith("NO_SQL_NEEDED:MODELS_QUESTION"):
+            logger.info("sql_generator_models_question_intercepted")
+            return {
+                **state,
+                "generated_sql":  None,
+                "final_response": _MODELS_ANSWER,
+                "sql_error":      None,
+                "execution_path": path,
+            }
 
         logger.info("sql_generated", sql_preview=cleaned[:120])
 

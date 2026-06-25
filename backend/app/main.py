@@ -14,12 +14,13 @@ from app.api.v1.endpoints import (
     auth,
     connections,
     query,
-    chat,          # <-- ADDED
+    chat,
     models,
     dashboard,
     etl,
     export,
 )
+from app.api.v1.endpoints.classify import router as classify_router
 
 configure_logging()
 logger = structlog.get_logger()
@@ -104,14 +105,15 @@ def create_app() -> FastAPI:
             )
 
     # Routers
-    app.include_router(auth.router, prefix="/api/v1")
+    app.include_router(auth.router,        prefix="/api/v1")
     app.include_router(connections.router, prefix="/api/v1")
-    app.include_router(query.router, prefix="/api/v1")
-    app.include_router(chat.router, prefix="/api/v1")      # <-- ADDED
-    app.include_router(models.router, prefix="/api/v1")
-    app.include_router(dashboard.router, prefix="/api/v1")
-    app.include_router(etl.router, prefix="/api/v1")
-    app.include_router(export.router, prefix="/api/v1")
+    app.include_router(query.router,       prefix="/api/v1")
+    app.include_router(chat.router,        prefix="/api/v1")
+    app.include_router(models.router,      prefix="/api/v1")
+    app.include_router(dashboard.router,   prefix="/api/v1")
+    app.include_router(etl.router,         prefix="/api/v1")
+    app.include_router(export.router,      prefix="/api/v1")
+    app.include_router(classify_router,    prefix="/api/v1")
 
     @app.on_event("startup")
     async def startup():

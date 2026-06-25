@@ -15,6 +15,13 @@ from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
+# Questions about available models — answer from static knowledge, never SQL
+_MODEL_QUESTION_KEYWORDS = (
+    "what models", "which models", "available models", "possible models",
+    "crm models", "erp models", "what can dataiq", "what predictions",
+    "what can you predict", "list models", "show models",
+)
+
 _INTENT_PROMPT = """You are an intent classifier for a business intelligence platform.
 
 Classify the user message into exactly ONE intent:
@@ -33,6 +40,11 @@ Rules:
 - If message contains "chart", "graph", "visualize", "plot" → lean chart_request or hybrid
 - If message references "last result", "it", "that", "further" and history exists → followup
 - For train / predict, also extract the business goal: churn | revenue_forecast | classification | regression
+- If message asks about available models, model types, or what DataIQ can predict → get_insight
+
+CRITICAL: Questions like "what are the possible CRM models", "what models are available",
+"what can you predict" are NOT sql_query — classify them as get_insight.
+These questions are answered from built-in knowledge, not from the database.
 
 Respond ONLY with compact JSON, no markdown:
 {"intent":"<intent>","confidence":<0.0-1.0>,"goal":"<or null>"}
@@ -44,6 +56,19 @@ def intent_classifier_node(state: ChatState) -> ChatState:
     path = state.get("execution_path", []) + [node_name]
 
     try:
+        message_lower = state["message"].lower()
+
+        # ── Short-circuit: model knowledge questions never need SQL ───────────
+        if any(kw in message_lower for kw in _MODEL_QUESTION_KEYWORDS):
+            logger.info("intent_classifier_model_question_detected")
+            return {
+                **state,
+                "intent":         ChatIntent.GET_INSIGHT,
+                "confidence":     0.95,
+                "goal":           None,
+                "execution_path": path,
+            }
+
         # Build context — include memory summary so FOLLOWUP can be detected
         memory_block = ""
         if state.get("memory_turns"):
