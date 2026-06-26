@@ -25,9 +25,8 @@ class Settings(BaseSettings):
     # LLM
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     LLM_MODEL: str = "qwen3:8b"
-    LLM_PROVIDER: str = "ollama"
-    OLLAMA_BASE_URL: str = "http://localhost:11434"
-    
+    LLM_PROVIDER: str = "ollama" 
+
     # ML
     ML_MODEL_DIR: str = "/tmp/dataiq/models"
 

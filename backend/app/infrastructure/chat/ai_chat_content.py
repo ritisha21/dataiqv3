@@ -149,7 +149,7 @@ def available_models_tool_handler(db_type: str) -> dict:
     Handles the get_available_models tool call.
     Returns structured model list for the given db_type.
     """
-    from db_classifier import get_available_models_for_type
+    from backend.app.infrastructure.ml_pipeline.db_classifier import get_available_models_for_type
     models = get_available_models_for_type(db_type)
     return {
         "db_type": db_type,
