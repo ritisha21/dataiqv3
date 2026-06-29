@@ -11,7 +11,6 @@ export const api = axios.create({
 
 api.interceptors.request.use((config) => {
   if (DEV_MODE) {
-    // Send a dummy token — backend bypass ignores it entirely
     config.headers.Authorization = 'Bearer dev-bypass-token'
     return config
   }
@@ -23,7 +22,7 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (res) => res,
   async (err) => {
-    if (DEV_MODE) return Promise.reject(err)   // no refresh in dev mode
+    if (DEV_MODE) return Promise.reject(err)
     const original = err.config
     if (err.response?.status === 401 && !original._retry) {
       original._retry = true
@@ -55,12 +54,12 @@ export const authApi = {
 }
 
 export const connectionsApi = {
-  connect:      (data: any)  => api.post('/connections/connect-db', data),
-  testConnection: (data: any) => api.post('/connections/test-connection', data),
-  list:         ()           => api.get('/connections/'),
-  getSchema:    (id: string) => api.get(`/connections/${id}/schema`),
-  getSemantic:  (id: string) => api.get(`/connections/${id}/semantic`),
-  reIntrospect: (id: string) => api.post(`/connections/${id}/re-introspect`),
+  connect:        (data: any)  => api.post('/connections/connect-db', data),
+  testConnection: (data: any)  => api.post('/connections/test-connection', data),
+  list:           ()           => api.get('/connections/'),
+  getSchema:      (id: string) => api.get(`/connections/${id}/schema`),
+  getSemantic:    (id: string) => api.get(`/connections/${id}/semantic`),
+  reIntrospect:   (id: string) => api.post(`/connections/${id}/re-introspect`),
 }
 
 export const queryApi = {
@@ -71,11 +70,14 @@ export const queryApi = {
 }
 
 export const modelsApi = {
-  train:   (data: any)    => api.post('/models/train-model', data),
-  list:    ()             => api.get('/models/'),
-  get:     (id: string)   => api.get(`/models/${id}`),
-  predict: (data: { model_id: string; input_data: Record<string, any> }) =>
+  train:          (data: any)    => api.post('/models/train-model', data),
+  list:           ()             => api.get('/models/'),
+  get:            (id: string)   => api.get(`/models/${id}`),
+  predict:        (data: { model_id: string; input_data: Record<string, any> }) =>
     api.post('/models/predict', data),
+  availableGoals: (connectionId: string) => api.get(`/models/goals/available/${connectionId}`),
+  recommend:      (data: { connection_id: string; goal_key: string }) =>
+    api.post('/models/goals/recommend', data),
 }
 
 export const dashboardApi = {
