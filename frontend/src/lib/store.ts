@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { persist, createJSONStorage } from 'zustand/middleware'
 import Cookies from 'js-cookie'
 
 const DEV_MODE   = true
@@ -38,17 +39,26 @@ export const useAuthStore = create<AuthState>((set) => ({
   },
 }))
 
+// ── Connection store — persisted so selection survives navigation ─────────────
 interface ConnectionStore {
   selectedConnectionId: string | null
   setConnection: (id: string) => void
 }
 
-export const useConnectionStore = create<ConnectionStore>((set) => ({
-  selectedConnectionId: null,
-  setConnection: (id) => set({ selectedConnectionId: id }),
-}))
+export const useConnectionStore = create<ConnectionStore>()(
+  persist(
+    (set) => ({
+      selectedConnectionId: null,
+      setConnection: (id) => set({ selectedConnectionId: id }),
+    }),
+    {
+      name:    'dataiq-connection-store',
+      storage: createJSONStorage(() => localStorage),
+    }
+  )
+)
 
-// ETL state persisted across navigation
+// ── ETL store ─────────────────────────────────────────────────────────────────
 interface ETLStore {
   scanResult: { tables: any[]; suggestions: any[] } | null
   selected: Set<string>
@@ -74,5 +84,8 @@ export const useETLStore = create<ETLStore>((set) => ({
   setTrainResults:  (r) => set({ trainResults: r }),
   setTaskId:        (id) => set({ taskId: id }),
   setExpandedTable: (t) => set({ expandedTable: t }),
-  resetETL: () => set({ scanResult: null, selected: new Set(), trainResults: [], taskId: null, expandedTable: null }),
+  resetETL: () => set({
+    scanResult: null, selected: new Set(),
+    trainResults: [], taskId: null, expandedTable: null,
+  }),
 }))
