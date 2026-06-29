@@ -1,12 +1,9 @@
 """
 Business Goal → CRM Model → ML Model recommendation engine.
-Maps high-level business goals to appropriate CRM predictive models
-based on available columns in the connected database.
 """
 
 from typing import Dict, List, Optional, Any
 
-# Full catalogue: business goal → CRM model → ML config
 GOAL_CATALOGUE = {
     "reduce_churn": {
         "label": "Reduce churn rate",
@@ -14,7 +11,7 @@ GOAL_CATALOGUE = {
         "crm_model_key": "churn_prediction",
         "description": "Predict which customers are likely to leave so you can intervene early.",
         "business_value": "Retention of customer base, win-back campaigns, proactive support",
-        "ml_goal": "classification",
+        "ml_goal": "churn",
         "required_cols": [],
         "preferred_cols": ["login_freq", "purchase_freq", "support_tickets", "payment_failures", "subscription_status"],
         "fallback_cols": ["close_value", "deal_stage", "sales_agent", "product", "created_date"],
@@ -26,7 +23,7 @@ GOAL_CATALOGUE = {
         "label": "Improve sales conversion",
         "crm_model": "Lead Scoring",
         "crm_model_key": "lead_scoring",
-        "description": "Score and rank leads by their likelihood to convert so sales focuses on the right prospects.",
+        "description": "Score and rank leads by their likelihood to convert.",
         "business_value": "Sales prioritization, higher win rates, shorter sales cycles",
         "ml_goal": "classification",
         "required_cols": [],
@@ -75,7 +72,7 @@ GOAL_CATALOGUE = {
         "preferred_cols": ["purchase_history", "product", "account_age", "feature_adoption", "support_interactions"],
         "fallback_cols": ["sales_agent", "product", "created_date", "close_value"],
         "target_col": "deal_stage",
-        "ml_model": "LightGBM/XGBoost",
+        "ml_model": "XGBoost",
         "source_table_hints": ["sales_pipeline", "orders", "accounts"],
     },
     "forecast_revenue": {
@@ -84,13 +81,13 @@ GOAL_CATALOGUE = {
         "crm_model_key": "sales_forecasting",
         "description": "Predict future revenue based on pipeline and historical sales patterns.",
         "business_value": "Budget planning, resource allocation, investor reporting",
-        "ml_goal": "regression",
+        "ml_goal": "revenue_forecast",
         "required_cols": [],
         "preferred_cols": ["close_value", "deal_stage", "sales_agent", "product", "created_date"],
         "fallback_cols": ["close_value", "sales_agent", "product"],
         "target_col": "close_value",
         "ml_model": "XGBoost Regressor",
-        "source_table_hints": ["sales_pipeline", "orders", "revenue"],
+        "source_table_hints": ["sales_pipeline", "orders", "revenue", "accounts"],
     },
     "segment_customers": {
         "label": "Segment customers",
@@ -98,12 +95,12 @@ GOAL_CATALOGUE = {
         "crm_model_key": "customer_segmentation",
         "description": "Group customers into actionable clusters: Loyal, At Risk, High Value, Low Engagement.",
         "business_value": "Personalized campaigns, targeted outreach, resource prioritization",
-        "ml_goal": "clustering",
+        "ml_goal": "classification",
         "required_cols": [],
         "preferred_cols": ["purchase_freq", "close_value", "account_age", "product", "sales_agent"],
         "fallback_cols": ["close_value", "sales_agent", "product", "created_date"],
-        "target_col": None,
-        "ml_model": "K-Means",
+        "target_col": "deal_stage",
+        "ml_model": "XGBoost",
         "source_table_hints": ["sales_pipeline", "customers", "accounts", "orders"],
     },
     "improve_onboarding": {
@@ -137,28 +134,50 @@ GOAL_CATALOGUE = {
 }
 
 
+def _get_table_name(table: Dict) -> str:
+    """
+    Safely extract table name — schema nodes may store it as 'id', 'name',
+    or 'table_name' depending on which scanner version ran.
+    """
+    return (
+        table.get("id")
+        or table.get("name")
+        or table.get("table_name")
+        or ""
+    ).lower()
+
+
+def _get_table_cols(table: Dict) -> List[str]:
+    """
+    Safely extract column names — columns may be list of dicts or list of strings.
+    """
+    cols = table.get("columns", [])
+    result = []
+    for c in cols:
+        if isinstance(c, dict):
+            result.append(c.get("name") or c.get("column_name") or "")
+        elif isinstance(c, str):
+            result.append(c)
+    return [c.lower() for c in result if c]
+
+
 def detect_available_models(schema_tables: List[Dict]) -> List[str]:
     """
     Given a list of schema table nodes, detect which business goals
-    are feasible based on available columns.
-    Returns list of goal keys that are possible.
+    are feasible based on available tables and columns.
+    Returns list of goal keys.
     """
-    # Flatten all column names across all tables
-    all_cols = set()
-    table_names = set()
-    for table in schema_tables:
-        table_names.add(table.get("id", "").lower())
-        for col in table.get("columns", []):
-            all_cols.add(col.get("name", "").lower())
+    table_names = {_get_table_name(t) for t in schema_tables}
+
+    # If schema has any tables at all, return all goals
+    # (fallback cols ensure we can always train something)
+    if not table_names:
+        return []
 
     available_goals = []
     for goal_key, config in GOAL_CATALOGUE.items():
-        # Check if any source table hint matches
-        table_match = any(
-            hint in table_names
-            for hint in config["source_table_hints"]
-        )
-        # Always include if we have any data tables
+        table_match = any(hint in table_names for hint in config["source_table_hints"])
+        # Include if table matches OR if we have tables (fallback always works)
         if table_match or len(table_names) > 0:
             available_goals.append(goal_key)
 
@@ -170,68 +189,75 @@ def recommend_model(
     schema_tables: List[Dict],
 ) -> Optional[Dict[str, Any]]:
     """
-    Given a business goal and schema, return a full recommendation
-    including which table, target column, features, and ML model to use.
+    Given a business goal and schema, return a full recommendation.
     """
     if goal_key not in GOAL_CATALOGUE:
         return None
 
     config = GOAL_CATALOGUE[goal_key]
 
-    # Find best matching table
-    all_tables = {t.get("id", "").lower(): t for t in schema_tables}
+    # Build table lookup using flexible name extraction
+    all_tables = {_get_table_name(t): t for t in schema_tables}
+
     best_table = None
     best_table_cols = []
 
+    # Try hint tables first
     for hint in config["source_table_hints"]:
         if hint in all_tables:
             best_table = hint
-            best_table_cols = [c.get("name", "") for c in all_tables[hint].get("columns", [])]
+            best_table_cols = _get_table_cols(all_tables[hint])
             break
 
     # Fall back to first available table
     if not best_table and schema_tables:
         first = schema_tables[0]
-        best_table = first.get("id", "")
-        best_table_cols = [c.get("name", "") for c in first.get("columns", [])]
+        best_table = _get_table_name(first)
+        best_table_cols = _get_table_cols(first)
 
     if not best_table:
         return None
 
-    # Determine which preferred cols are actually available
+    # Match preferred cols
     available_preferred = [c for c in config["preferred_cols"] if c in best_table_cols]
-    available_fallback = [c for c in config["fallback_cols"] if c in best_table_cols]
+    available_fallback  = [c for c in config["fallback_cols"]  if c in best_table_cols]
 
-    # Use preferred if available, otherwise fallback
+    # If neither preferred nor fallback match, use all numeric-looking cols
+    if not available_preferred and not available_fallback:
+        available_fallback = best_table_cols[:8]  # just use first 8 cols
+
     feature_cols = available_preferred if available_preferred else available_fallback
 
     # Determine target column
     target_col = config["target_col"]
     if target_col and target_col not in best_table_cols:
-        # Try to find a suitable target
-        for candidate in ["deal_stage", "status", "stage", "outcome", "converted"]:
+        for candidate in ["deal_stage", "status", "stage", "outcome", "converted",
+                          "close_value", "revenue", "amount", "value"]:
             if candidate in best_table_cols:
                 target_col = candidate
                 break
+        else:
+            # Last resort: pick last column (often a status/value col)
+            target_col = best_table_cols[-1] if best_table_cols else None
 
     return {
-        "goal_key": goal_key,
-        "goal_label": config["label"],
-        "crm_model": config["crm_model"],
-        "crm_model_key": config["crm_model_key"],
-        "description": config["description"],
-        "business_value": config["business_value"],
-        "ml_model": config["ml_model"],
-        "ml_goal": config["ml_goal"],
-        "source_table": best_table,
-        "target_col": target_col,
-        "feature_cols": feature_cols,
-        "available_cols": best_table_cols,
-        "data_quality": "good" if available_preferred else "limited",
+        "goal_key":         goal_key,
+        "goal_label":       config["label"],
+        "crm_model":        config["crm_model"],
+        "crm_model_key":    config["crm_model_key"],
+        "description":      config["description"],
+        "business_value":   config["business_value"],
+        "ml_model":         config["ml_model"],
+        "ml_goal":          config["ml_goal"],
+        "source_table":     best_table,
+        "target_col":       target_col,
+        "feature_cols":     feature_cols,
+        "available_cols":   best_table_cols,
+        "data_quality":     "good" if available_preferred else "limited",
         "data_quality_note": (
             f"Found {len(available_preferred)} ideal features for this model."
             if available_preferred
-            else f"Ideal features not found. Using {len(available_fallback)} available columns as proxy."
+            else f"Using {len(available_fallback)} available columns as proxy features."
         ),
     }
 
@@ -239,9 +265,15 @@ def recommend_model(
 def get_all_goals() -> List[Dict]:
     """Return all goals with labels for the UI dropdown."""
     return [
-        {"key": k, "label": v["label"], "crm_model": v["crm_model"], "ml_model": v["ml_model"]}
+        {
+            "key":       k,
+            "label":     v["label"],
+            "crm_model": v["crm_model"],
+            "ml_model":  v["ml_model"],
+        }
         for k, v in GOAL_CATALOGUE.items()
     ]
+
 
 # ── DB Classification ─────────────────────────────────────────────────────────
 
@@ -259,11 +291,7 @@ ERP_TABLE_SIGNALS = {
 
 
 def classify_db(schema_tables: List[Dict]) -> Dict[str, Any]:
-    """
-    Classify a database as CRM, ERP, or Hybrid based on table names.
-    Returns classification + confidence + matched signals.
-    """
-    table_names = {t.get("id", "").lower() for t in schema_tables}
+    table_names = {_get_table_name(t) for t in schema_tables}
     crm_hits = table_names & CRM_TABLE_SIGNALS
     erp_hits = table_names & ERP_TABLE_SIGNALS
 
@@ -281,7 +309,7 @@ def classify_db(schema_tables: List[Dict]) -> Dict[str, Any]:
         confidence = 0.3
 
     return {
-        "db_type": db_type,
+        "db_type":    db_type,
         "confidence": round(confidence, 2),
         "crm_signals": list(crm_hits),
         "erp_signals": list(erp_hits),

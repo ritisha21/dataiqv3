@@ -50,7 +50,6 @@ async def train_model(
     ctx: TenantContext = Depends(require_analyst_or_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    # Verify connection belongs to tenant
     conn_result = await db.execute(
         select(DBConnection).where(
             DBConnection.id == req.connection_id,
@@ -61,7 +60,6 @@ async def train_model(
     if not conn:
         raise HTTPException(404, "Connection not found")
 
-    # Load semantic mappings
     sem_result = await db.execute(
         select(SemanticMapping).where(
             SemanticMapping.connection_id == req.connection_id,
@@ -70,7 +68,6 @@ async def train_model(
     )
     sem = sem_result.scalar_one_or_none()
 
-    # Create model record
     model = MLModel(
         tenant_id=ctx.tenant_id,
         connection_id=req.connection_id,
@@ -86,7 +83,6 @@ async def train_model(
     model_id = str(model.id)
     await db.commit()
 
-    # Dispatch async task
     connection_config = {
         "db_type": conn.db_type.value,
         "host": conn.host,
@@ -111,6 +107,78 @@ async def train_model(
         "status": "training_queued",
         "message": f"Model '{req.name}' training started",
     }
+
+
+@router.get("/goals/all")
+async def list_goals():
+    """Return all available business goals."""
+    return get_all_goals()
+
+
+@router.get("/goals/available/{connection_id}")
+async def available_goals(
+    connection_id: str,
+    ctx: TenantContext = Depends(get_tenant_context),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return which business goals are feasible given the connected schema."""
+    result = await db.execute(
+        select(SchemaSnapshot)
+        .where(SchemaSnapshot.connection_id == connection_id)
+        .where(SchemaSnapshot.tenant_id == ctx.tenant_id)
+        .order_by(SchemaSnapshot.version.desc())
+        .limit(1)
+    )
+    snapshot = result.scalar_one_or_none()
+
+    # No snapshot yet — return all goals so panel is never empty
+    if not snapshot:
+        return get_all_goals()
+
+    schema_tables = snapshot.schema_graph.get("nodes", [])
+    available = detect_available_models(schema_tables)
+    all_goals = {g["key"]: g for g in get_all_goals()}
+
+    matched = [all_goals[k] for k in available if k in all_goals]
+
+    # If detection returned nothing, fall back to all goals
+    if not matched:
+        matched = get_all_goals()
+
+    return matched  # plain array — dashboard .map()s directly on this
+
+
+@router.post("/goals/recommend")
+async def recommend(
+    req: Dict[str, Any],
+    ctx: TenantContext = Depends(get_tenant_context),
+    db: AsyncSession = Depends(get_db),
+):
+    """Given a business goal and connection, recommend a CRM model + training config."""
+    connection_id = req.get("connection_id")
+    goal_key = req.get("goal_key")
+
+    if not connection_id or not goal_key:
+        raise HTTPException(400, "connection_id and goal_key are required")
+
+    result = await db.execute(
+        select(SchemaSnapshot)
+        .where(SchemaSnapshot.connection_id == connection_id)
+        .where(SchemaSnapshot.tenant_id == ctx.tenant_id)
+        .order_by(SchemaSnapshot.version.desc())
+        .limit(1)
+    )
+    snapshot = result.scalar_one_or_none()
+    if not snapshot:
+        raise HTTPException(404, "No schema found. Run a schema scan first.")
+
+    schema_tables = snapshot.schema_graph.get("nodes", [])
+    recommendation = recommend_model(goal_key, schema_tables)
+
+    if not recommendation:
+        raise HTTPException(400, "Could not generate recommendation for this goal and schema.")
+
+    return recommendation
 
 
 @router.get("/", response_model=List[ModelResponse])
@@ -152,7 +220,6 @@ async def get_model(
     if not model:
         raise HTTPException(404, "Model not found")
 
-    # Load experiments
     exp_result = await db.execute(
         select(MLExperiment).where(MLExperiment.model_id == model_id).order_by(MLExperiment.run_number)
     )
@@ -211,68 +278,3 @@ async def predict(
         }
     except Exception as e:
         raise HTTPException(500, f"Prediction failed: {e}")
-
-@router.get("/goals/all")
-async def list_goals():
-    """Return all available business goals."""
-    return get_all_goals()
-
-
-@router.get("/goals/available/{connection_id}")
-async def available_goals(
-    connection_id: str,
-    ctx: TenantContext = Depends(get_tenant_context),
-    db: AsyncSession = Depends(get_db),
-):
-    """Return which business goals are feasible given the connected schema."""
-    result = await db.execute(
-        select(SchemaSnapshot)
-        .where(SchemaSnapshot.connection_id == connection_id)
-        .where(SchemaSnapshot.tenant_id == ctx.tenant_id)
-        .order_by(SchemaSnapshot.version.desc())
-        .limit(1)
-    )
-    snapshot = result.scalar_one_or_none()
-    if not snapshot:
-        return []
-    schema_tables = snapshot.schema_graph.get("nodes", [])
-    db_classification = snapshot.schema_graph.get("db_classification", {})
-    available = detect_available_models(schema_tables)
-    all_goals = {g["key"]: g for g in get_all_goals()}
-    return {
-        "db_classification": db_classification,
-        "available_goals": [all_goals[k] for k in available if k in all_goals],
-    }
-
-
-@router.post("/goals/recommend")
-async def recommend(
-    req: Dict[str, Any],
-    ctx: TenantContext = Depends(get_tenant_context),
-    db: AsyncSession = Depends(get_db),
-):
-    """Given a business goal and connection, recommend a CRM model + training config."""
-    connection_id = req.get("connection_id")
-    goal_key = req.get("goal_key")
-
-    if not connection_id or not goal_key:
-        raise HTTPException(400, "connection_id and goal_key are required")
-
-    result = await db.execute(
-        select(SchemaSnapshot)
-        .where(SchemaSnapshot.connection_id == connection_id)
-        .where(SchemaSnapshot.tenant_id == ctx.tenant_id)
-        .order_by(SchemaSnapshot.version.desc())
-        .limit(1)
-    )
-    snapshot = result.scalar_one_or_none()
-    if not snapshot:
-        raise HTTPException(404, "No schema found. Run a schema scan first.")
-
-    schema_tables = snapshot.schema_graph.get("nodes", [])
-    recommendation = recommend_model(goal_key, schema_tables)
-
-    if not recommendation:
-        raise HTTPException(400, "Could not generate recommendation for this goal and schema.")
-
-    return recommendation
