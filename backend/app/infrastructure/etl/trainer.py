@@ -1,10 +1,5 @@
 """
 ETL Trainer — Dask-powered
-───────────────────────────
-E — Dask reads table in partitions (handles 10M+ rows)
-T — Dask feature engineering: map_partitions for transforms,
-    then compute() only when XGBoost needs a numpy array
-L — XGBoost DMatrix built directly from Dask array (zero copy)
 """
 
 from __future__ import annotations
@@ -80,7 +75,6 @@ class ETLTrainer:
                 # ── T: Transform with Dask ────────────────────────────────────
                 ddf_feat, feat_names = _dask_feature_engineering(ddf, target_col)
 
-                # Verify target survived
                 if target_col not in ddf_feat.columns:
                     raise ValueError(f"Target '{target_col}' dropped during transforms")
 
@@ -93,11 +87,28 @@ class ETLTrainer:
                     source_table=table, status="training",
                 )
 
-                # Compute Dask → pandas only once, right before training
                 logger.info("dask_compute_start", table=table)
                 with ProgressBar():
                     final_df = ddf_feat.compute()
                 logger.info("dask_compute_done", shape=final_df.shape)
+
+                # ── Force-clean any remaining string columns ──────────────────
+                # Drop non-numeric columns except the target
+                str_cols = [
+                    c for c in final_df.columns
+                    if c != target_col and final_df[c].dtype == object
+                ]
+                if str_cols:
+                    logger.info("dropping_string_cols", cols=str_cols)
+                    final_df = final_df.drop(columns=str_cols)
+
+                # Coerce everything except target to float
+                feature_cols_in_df = [c for c in final_df.columns if c != target_col]
+                final_df[feature_cols_in_df] = (
+                    final_df[feature_cols_in_df]
+                    .apply(pd.to_numeric, errors="coerce")
+                    .fillna(0)
+                )
 
                 from app.infrastructure.ml_pipeline.pipeline import ml_pipeline
                 try:
@@ -159,19 +170,15 @@ def _dask_feature_engineering(
     ddf: dd.DataFrame,
     target_col: str,
 ) -> tuple[dd.DataFrame, list[str]]:
-    """
-    All transforms are applied partition-by-partition via map_partitions.
-    No .compute() is called here — the graph stays lazy.
-    """
 
-    # 1. Drop high-null columns (compute null rates cheaply)
+    # 1. Drop high-null columns
     null_rates = ddf.isnull().mean().compute()
     drop_cols  = null_rates[null_rates > 0.7].index.tolist()
     drop_cols  = [c for c in drop_cols if c != target_col]
     if drop_cols:
         ddf = ddf.drop(columns=drop_cols)
 
-    # 2. Datetime decomposition (lazy, per partition)
+    # 2. Datetime decomposition
     dt_cols = [
         c for c in ddf.columns
         if any(kw in c.lower() for kw in ("date","time","created","updated","_at"))
@@ -181,8 +188,7 @@ def _dask_feature_engineering(
         ddf = ddf.map_partitions(_expand_datetime, col, meta=_datetime_meta(ddf, col))
         ddf = ddf.drop(columns=[col], errors="ignore")
 
-    # 3. Categorical encoding (lazy frequency encoding per partition)
-    #    We compute the global frequency map once, then apply lazily
+    # 3. Categorical frequency encoding
     obj_cols = [
         c for c in ddf.select_dtypes(include=["object"]).columns
         if c != target_col
@@ -194,7 +200,7 @@ def _dask_feature_engineering(
             meta=ddf._meta.assign(**{col: 0.0})
         )
 
-    # 4. Fill numeric NaNs (lazy)
+    # 4. Fill numeric NaNs
     num_cols = [
         c for c in ddf.select_dtypes(include=[np.number]).columns
         if c != target_col
@@ -236,10 +242,7 @@ def _freq_encode(
     return partition
 
 
-# ── helpers ───────────────────────────────────────────────────────────────────
-
 def _dask_hash(ddf: dd.DataFrame) -> str:
-    """Cheap reproducible hash: shape + column names + first partition sample."""
     import hashlib
     try:
         shape_str = f"{ddf.npartitions}"
