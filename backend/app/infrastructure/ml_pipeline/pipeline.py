@@ -81,6 +81,7 @@ class MLPipelineService:
                 for w in meta.get("warnings", []):
                     logger.warning("feature_engineering_warning", msg=w)
 
+                X_eng = X_eng.apply(pd.to_numeric, errors='coerce').fillna(0)
                 return X_eng, y_eng, {}, model_type
 
             # build_features ran but found no target col — log and fall through
@@ -148,7 +149,8 @@ class MLPipelineService:
         X, y, freq_maps, model_type_used = self._prepare_features(
             df, target_col, goal, input_freq_maps
         )
-
+        X, y, freq_maps, model_type_used = self._prepare_features(df, target_col, goal, input_freq_maps)
+        X = X.apply(pd.to_numeric, errors='coerce').fillna(0)  # ← ADD THIS LINE
         # Determine task type
         is_classification = goal in (ModelGoal.classification, ModelGoal.churn)
         if not is_classification:
