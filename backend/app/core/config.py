@@ -1,9 +1,16 @@
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 from typing import Optional
 
 
 class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=True,
+        extra="ignore",
+    )
+
     # Database
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/dataiq"
     SYNC_DATABASE_URL: str = "postgresql+psycopg2://postgres:postgres@localhost:5432/dataiq"
@@ -25,7 +32,7 @@ class Settings(BaseSettings):
     # LLM
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     LLM_MODEL: str = "qwen3:8b"
-    LLM_PROVIDER: str = "ollama" 
+    LLM_PROVIDER: str = "ollama"
 
     # ML
     ML_MODEL_DIR: str = "/tmp/dataiq/models"
@@ -34,15 +41,18 @@ class Settings(BaseSettings):
     MAX_QUERY_ROWS: int = 10000
     QUERY_TIMEOUT_SECONDS: int = 30
 
+    # MinIO
+    MINIO_ENDPOINT: str = "localhost:9000"
+    MINIO_ACCESS_KEY: str = "dataiq"
+    MINIO_SECRET_KEY: str = "dataiq_local_dev_password"
+    MINIO_BUCKET: str = "dataiq-csv-exports"
+    MINIO_SECURE: bool = False
+
     # App
     ENVIRONMENT: str = "development"
     LOG_LEVEL: str = "INFO"
     APP_NAME: str = "DataIQ Platform"
     VERSION: str = "1.0.0"
-
-    class Config:
-        env_file = ".env"
-        case_sensitive = True
 
 
 @lru_cache()
