@@ -5,7 +5,12 @@ celery_app = Celery(
     "dataiq",
     broker=settings.CELERY_BROKER_URL,
     backend=settings.CELERY_RESULT_BACKEND,
-    include=["app.infrastructure.tasks.ml_tasks", "app.infrastructure.tasks.schema_tasks", "app.infrastructure.tasks.etl_tasks"],
+    include=[
+        "app.infrastructure.tasks.ml_tasks",
+        "app.infrastructure.tasks.schema_tasks",
+        "app.infrastructure.tasks.etl_tasks",
+        "app.infrastructure.tasks.storage_tasks",
+    ],
 )
 
 celery_app.conf.update(
