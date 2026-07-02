@@ -5,7 +5,7 @@ import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
          ScatterChart, Scatter, XAxis, YAxis, Tooltip,
          ResponsiveContainer, CartesianGrid, Legend } from 'recharts'
 import { Send, Loader2, Database, ChevronDown, ChevronUp,
-         BarChart2, MessageSquare, Zap } from 'lucide-react'
+         BarChart2, MessageSquare, Zap, Trash2 } from 'lucide-react'
 import Link from 'next/link'
 import clsx from 'clsx'
 
@@ -28,16 +28,74 @@ interface Message {
 
 function uid() { return Math.random().toString(36).slice(2, 9) }
 
+function getToken() {
+  return document.cookie.split('; ')
+    .find(r => r.startsWith('access_token='))
+    ?.split('=')[1] || 'dev-bypass-token'
+}
+
 export default function ChatPage() {
   const { selectedConnectionId } = useConnectionStore()
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput]       = useState('')
   const [streaming, setStreaming] = useState(false)
+  const [historyLoaded, setHistoryLoaded] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
+
+  // ── Load chat history when connection changes ───────────────────────────────
+  useEffect(() => {
+    if (!selectedConnectionId) {
+      setMessages([])
+      setHistoryLoaded(false)
+      return
+    }
+
+    let cancelled = false
+    setHistoryLoaded(false)
+
+    fetch(`${API}/api/v1/chat/history?connection_id=${selectedConnectionId}`, {
+      headers: { Authorization: `Bearer ${getToken()}` },
+    })
+      .then(r => r.json())
+      .then(data => {
+        if (cancelled) return
+        const turns = data.turns || []
+        // Backend turns are {role, content, sql?, ...} — map to Message shape
+        const restored: Message[] = turns.map((t: any) => ({
+          id: uid(),
+          role: t.role === 'user' ? 'user' : 'assistant',
+          content: t.content || '',
+          sql: t.sql,
+          data: t.data,
+          columns: t.columns,
+          chart: t.chart,
+          insight: t.insight,
+          response_type: t.response_type,
+        }))
+        setMessages(restored)
+        setHistoryLoaded(true)
+      })
+      .catch(() => {
+        if (!cancelled) setHistoryLoaded(true)
+      })
+
+    return () => { cancelled = true }
+  }, [selectedConnectionId])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
+
+  const clearHistory = async () => {
+    if (!selectedConnectionId) return
+    try {
+      await fetch(`${API}/api/v1/chat/history?connection_id=${selectedConnectionId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${getToken()}` },
+      })
+      setMessages([])
+    } catch { /* ignore */ }
+  }
 
   const sendMessage = async () => {
     if (!input.trim() || streaming || !selectedConnectionId) return
@@ -50,9 +108,7 @@ export default function ChatPage() {
     setStreaming(true)
 
     try {
-      const token = document.cookie.split('; ')
-        .find(r => r.startsWith('access_token='))
-        ?.split('=')[1]
+      const token = getToken()
 
       const resp = await fetch(`${API}/api/v1/chat/stream`, {
         method:  'POST',
@@ -142,12 +198,26 @@ export default function ChatPage() {
       <div className="border-b border-border px-6 py-3 flex items-center gap-2">
         <MessageSquare size={16} className="text-accent" />
         <span className="text-sm font-medium">AI Chat</span>
-        <span className="ml-auto text-xs text-muted">SSE streaming · LangGraph</span>
+        <span className="ml-auto flex items-center gap-3">
+          <span className="text-xs text-muted">SSE streaming · LangGraph</span>
+          {messages.length > 0 && (
+            <button onClick={clearHistory}
+              className="flex items-center gap-1 text-xs text-muted hover:text-red-400 transition-colors">
+              <Trash2 size={12} /> Clear
+            </button>
+          )}
+        </span>
       </div>
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-6 space-y-4">
-        {messages.length === 0 && (
+        {!historyLoaded && (
+          <div className="flex items-center justify-center h-full">
+            <Loader2 size={20} className="animate-spin text-accent" />
+          </div>
+        )}
+
+        {historyLoaded && messages.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full gap-4 text-center">
             <div className="w-12 h-12 rounded-2xl bg-accent/10 flex items-center justify-center">
               <Zap size={24} className="text-accent" />
@@ -170,7 +240,7 @@ export default function ChatPage() {
           </div>
         )}
 
-        {messages.map(m => (
+        {historyLoaded && messages.map(m => (
           <MessageBubble key={m.id} message={m} />
         ))}
         <div ref={bottomRef} />
@@ -298,7 +368,7 @@ function MessageBubble({ message: m }: { message: Message }) {
         {/* ML task */}
         {m.ml_task?.triggered && !m.loading && (
           <div className="glass rounded-xl px-4 py-3 border-accent/30">
-            <p className="text-xs text-accent font-medium mb-1">🤖 Model Training Queued</p>
+            <p className="text-xs text-accent font-medium mb-1">Model training queued</p>
             <p className="text-xs text-muted">
               Goal: {m.ml_task.goal} · Target: {m.ml_task.target_col} · Table: {m.ml_task.source_table}
             </p>

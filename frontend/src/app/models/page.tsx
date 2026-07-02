@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { modelsApi, connectionsApi } from '@/lib/api'
 import { useConnectionStore } from '@/lib/store'
@@ -11,7 +11,6 @@ import {
 
 const GOALS = ['churn', 'revenue_forecast', 'classification', 'regression']
 
-// Known agents and products from the CRM data
 const SALES_AGENTS = [
   'Darcel Schlecht', 'Vicki Laflamme', 'Anna Snelling', 'Kary Hendrixson',
   'Kami Bicknell', 'Versie Hillebrand', 'Zane Levy', 'Cassey Cress',
@@ -33,9 +32,13 @@ export default function ModelsPage() {
   const [showTrain, setShowTrain] = useState(false)
   const qc = useQueryClient()
 
-  const { data: models = [], isLoading } = useQuery({
+  const { data: models = [], isLoading, error } = useQuery({
     queryKey: ['models'],
-    queryFn:  () => modelsApi.list().then(r => r.data),
+    queryFn:  () => modelsApi.list().then(r => {
+      // API returns array directly
+      const data = r.data
+      return Array.isArray(data) ? data : (data?.models || data?.items || [])
+    }),
     refetchInterval: 8_000,
   })
 
@@ -74,14 +77,20 @@ export default function ModelsPage() {
       )}
 
       {isLoading ? (
-        <div className="flex justify-center py-12"><Loader2 className="animate-spin text-accent" /></div>
+        <div className="flex justify-center py-12">
+          <Loader2 className="animate-spin text-accent" />
+        </div>
+      ) : error ? (
+        <div className="glass p-8 text-center text-red-400 text-sm">
+          Failed to load models — {(error as any)?.message}
+        </div>
       ) : (
         <div className="space-y-3">
-          {models.map((m: any) => <ModelCard key={m.id} model={m} />)}
-          {models.length === 0 && (
+          {(models as any[]).map((m: any) => <ModelCard key={m.id} model={m} />)}
+          {(models as any[]).length === 0 && (
             <div className="glass p-12 flex flex-col items-center gap-3 text-center">
               <BrainCircuit size={40} className="text-muted" />
-              <p className="text-muted text-sm">No models yet. Train your first model.</p>
+              <p className="text-muted text-sm">No models yet. Train your first model from the ETL page or use the button above.</p>
             </div>
           )}
         </div>
@@ -100,10 +109,10 @@ function TrainForm({ connectionId, onSubmit, loading }: any) {
     queryFn:  () => connectionsApi.getSchema(connectionId).then(r => r.data),
   })
 
-  const tables = schema?.schema?.nodes?.map((n: any) => n.id) || []
+  const tables = schema?.schema?.nodes?.map((n: any) => n.id || n.name) || []
   const selectedTableCols = schema?.schema?.nodes
-    ?.find((n: any) => n.id === f.source_table)
-    ?.columns?.map((c: any) => c.name) || []
+    ?.find((n: any) => (n.id || n.name) === f.source_table)
+    ?.columns?.map((c: any) => typeof c === 'string' ? c : c.name) || []
 
   return (
     <div className="glass p-6 space-y-4 animate-slide-up">
@@ -157,7 +166,6 @@ function ModelCard({ model: m }: { model: any }) {
   const [predResult, setPredResult] = useState<any>(null)
   const [predLoading, setPredLoading] = useState(false)
 
-  // Smart form fields
   const [salesAgent, setSalesAgent] = useState('Anna Snelling')
   const [product, setProduct] = useState('GTXPro')
   const [createdDate, setCreatedDate] = useState('2017-01-01')
@@ -226,7 +234,6 @@ function ModelCard({ model: m }: { model: any }) {
 
       {expanded && (
         <div className="border-t border-border p-4 space-y-4">
-          {/* Metrics */}
           {m.metrics && Object.keys(m.metrics).length > 0 && (
             <div>
               <p className="text-xs text-muted mb-2 font-medium">METRICS</p>
@@ -245,67 +252,42 @@ function ModelCard({ model: m }: { model: any }) {
             </div>
           )}
 
-          {/* Smart Prediction Form */}
           {m.status === 'ready' && (
             <div>
               <p className="text-xs text-muted mb-3 font-medium">PREDICT DEAL OUTCOME</p>
               <div className="grid grid-cols-2 gap-3">
-
-                {/* Sales Agent dropdown */}
                 <div>
                   <label className="block text-xs text-muted mb-1">Sales Agent</label>
-                  <select
-                    value={salesAgent}
-                    onChange={e => setSalesAgent(e.target.value)}
+                  <select value={salesAgent} onChange={e => setSalesAgent(e.target.value)}
                     className="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 text-sm
-                               text-white focus:outline-none focus:border-accent"
-                  >
+                               text-white focus:outline-none focus:border-accent">
                     {SALES_AGENTS.map(a => <option key={a} value={a}>{a}</option>)}
                   </select>
                 </div>
-
-                {/* Product dropdown */}
                 <div>
                   <label className="block text-xs text-muted mb-1">Product</label>
-                  <select
-                    value={product}
-                    onChange={e => setProduct(e.target.value)}
+                  <select value={product} onChange={e => setProduct(e.target.value)}
                     className="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 text-sm
-                               text-white focus:outline-none focus:border-accent"
-                  >
+                               text-white focus:outline-none focus:border-accent">
                     {PRODUCTS.map(p => <option key={p} value={p}>{p}</option>)}
                   </select>
                 </div>
-
-                {/* Deal Created */}
                 <div>
                   <label className="block text-xs text-muted mb-1">Deal Created</label>
-                  <input
-                    type="date"
-                    value={createdDate}
-                    onChange={e => setCreatedDate(e.target.value)}
+                  <input type="date" value={createdDate} onChange={e => setCreatedDate(e.target.value)}
                     className="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 text-sm
-                               text-white focus:outline-none focus:border-accent"
-                  />
+                               text-white focus:outline-none focus:border-accent" />
                 </div>
-
-                {/* Predict Button */}
                 <div className="flex items-end">
-                  <button
-                    onClick={runPrediction}
-                    disabled={predLoading}
+                  <button onClick={runPrediction} disabled={predLoading}
                     className="w-full px-4 py-2 bg-accent hover:bg-accent-hover disabled:opacity-50
-                               rounded-lg text-sm transition-all flex items-center justify-center gap-2"
-                  >
-                    {predLoading
-                      ? <Loader2 size={14} className="animate-spin" />
-                      : <Zap size={14} />}
+                               rounded-lg text-sm transition-all flex items-center justify-center gap-2">
+                    {predLoading ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />}
                     Predict Outcome
                   </button>
                 </div>
               </div>
 
-              {/* Result */}
               {predResult !== null && (
                 <div className="mt-4 bg-surface-3 border border-border rounded-xl p-4">
                   <p className="text-xs text-muted mb-2">PREDICTION RESULT</p>
@@ -324,10 +306,8 @@ function ModelCard({ model: m }: { model: any }) {
                             <span>{(predResult.confidence * 100).toFixed(1)}%</span>
                           </div>
                           <div className="w-full bg-surface-2 rounded-full h-2">
-                            <div
-                              className="bg-accent rounded-full h-2 transition-all"
-                              style={{ width: `${predResult.confidence * 100}%` }}
-                            />
+                            <div className="bg-accent rounded-full h-2 transition-all"
+                              style={{ width: `${predResult.confidence * 100}%` }} />
                           </div>
                         </div>
                       )}
